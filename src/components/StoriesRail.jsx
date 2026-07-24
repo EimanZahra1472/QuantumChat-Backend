@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import client from '../api/client.js';
-import { getToken, findSecretKeyForPublicKey } from '../crypto/keyStorage.js';
+import {
+  findSecretKeyForPublicKey,
+  getCurrentKeySet,
+  getKeyring,
+} from '../crypto/keyStorage.js';
 import { getSocket } from '../api/socket.js';
 import { sealMessage, unsealMessage, pickRandom } from '../crypto/keys.js';
 import UserAvatar from './UserAvatar.jsx';
 
 const MAX_STORY_SECONDS = 60;
-const API_BASE = `${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api`;
 
 function bytesToBase64(bytes) {
   let s = '';
@@ -18,7 +21,12 @@ function bytesToBase64(bytes) {
 }
 
 function base64ToBytes(b64) {
-  const bin = atob(b64);
+  // Multipart form fields sometimes turn '+' into spaces; normalize before atob.
+  const normalized = String(b64 || '')
+    .replace(/-/g, '+')
+    .replace(/_/g, '/')
+    .replace(/\s/g, '');
+  const bin = atob(normalized);
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i += 1) out[i] = bin.charCodeAt(i);
   return out;
@@ -75,29 +83,62 @@ function probeMediaDuration(file) {
   });
 }
 
+function envelopeUserId(envelope) {
+  return String(envelope?.user?.id || envelope?.user || '');
+}
+
 function buildStoryEnvelopes(audience, keyB64, ivB64) {
   const secretPayload = JSON.stringify({ keyB64, ivB64 });
   return audience.map((u) => {
     const keys = (u.publicKeys || []).filter(Boolean);
     if (!keys.length) throw new Error(`Missing X5 keys for ${u.username || u.id}`);
     const sealed = sealMessage(secretPayload, pickRandom(keys));
-    return { user: u.id, ...sealed };
+    return { user: String(u.id), ...sealed };
   });
 }
 
-function unlockStoryKey(story, currentUserId) {
-  const envelopes = story.envelopes || [];
-  const mine = envelopes.find((e) => String(e.user) === String(currentUserId));
-  if (!mine?.targetPublicKey) return null;
-  const secret = findSecretKeyForPublicKey(currentUserId, mine.targetPublicKey);
-  if (!secret) return null;
-  const text = unsealMessage(mine, secret);
+function tryParseKeyPayload(text) {
   if (!text) return null;
   try {
-    return JSON.parse(text);
+    const parsed = JSON.parse(text);
+    if (parsed?.keyB64 && parsed?.ivB64) return parsed;
   } catch {
-    return null;
+    // ignore
   }
+  return null;
+}
+
+/** Open the AES media key from any of this viewer's story envelopes. */
+function unlockStoryKey(story, currentUserId) {
+  const uid = String(currentUserId?.id || currentUserId || '');
+  if (!uid) return null;
+  const envelopes = (story.envelopes || []).filter((e) => envelopeUserId(e) === uid);
+  if (!envelopes.length) return null;
+
+  const ring = getKeyring(uid);
+
+  for (const envelope of envelopes) {
+    const hinted = envelope.targetPublicKey
+      ? findSecretKeyForPublicKey(uid, envelope.targetPublicKey)
+      : null;
+    if (hinted) {
+      const unlocked = tryParseKeyPayload(unsealMessage(envelope, hinted));
+      if (unlocked) return unlocked;
+    }
+    // Fallback: try every local secret (covers stale targetPublicKey hints).
+    for (const entry of ring) {
+      if (hinted && entry.secretKey === hinted) continue;
+      const unlocked = tryParseKeyPayload(unsealMessage(envelope, entry.secretKey));
+      if (unlocked) return unlocked;
+    }
+  }
+  return null;
+}
+
+function viewerCanSeeStory(story, currentUserId) {
+  if (!story?.sealed) return true;
+  const uid = String(currentUserId?.id || currentUserId || '');
+  return (story.envelopes || []).some((e) => envelopeUserId(e) === uid);
 }
 
 export default function StoriesRail({ currentUser, users = [], onError }) {
@@ -109,6 +150,7 @@ export default function StoriesRail({ currentUser, users = [], onError }) {
   const grouped = useMemo(() => {
     const map = new Map();
     for (const story of stories) {
+      if (!viewerCanSeeStory(story, currentUser?.id)) continue;
       const uid = String(story.user?.id || story.user);
       if (!map.has(uid)) {
         map.set(uid, { user: story.user, items: [] });
@@ -140,6 +182,7 @@ export default function StoriesRail({ currentUser, users = [], onError }) {
     if (!socket) return undefined;
     function onNew(payload) {
       if (!payload?.id) return;
+      if (!viewerCanSeeStory(payload, currentUser?.id)) return;
       setStories((prev) => {
         if (prev.some((s) => String(s.id) === String(payload.id))) return prev;
         return [payload, ...prev];
@@ -155,7 +198,7 @@ export default function StoriesRail({ currentUser, users = [], onError }) {
       socket.off('story:new', onNew);
       socket.off('story:deleted', onDeleted);
     };
-  }, []);
+  }, [currentUser?.id]);
 
   async function handleFile(e) {
     const file = e.target.files?.[0];
@@ -177,31 +220,40 @@ export default function StoriesRail({ currentUser, users = [], onError }) {
 
       if (canSeal) {
         const sealed = await aesGcmEncryptBlob(file);
+        // Seal the author envelope to keys this device actually holds (same
+        // pattern as chat forSender), not a possibly stale session publicKeys list.
+        const localKeySet = getCurrentKeySet(currentUser.id);
+        const authorPublicKeys = localKeySet.map((k) => k.publicKey).filter(Boolean);
+        if (!authorPublicKeys.length) {
+          throw new Error('Import your encryption keys before posting a sealed story');
+        }
+        for (const pk of authorPublicKeys) {
+          if (!findSecretKeyForPublicKey(currentUser.id, pk)) {
+            throw new Error('Local keyring is incomplete — re-import your keys.txt');
+          }
+        }
+
         const audienceMap = new Map();
         audienceMap.set(String(currentUser.id), {
-          id: currentUser.id,
+          id: String(currentUser.id),
           username: currentUser.username,
-          publicKeys: currentUser.publicKeys || [],
+          publicKeys: authorPublicKeys,
         });
         for (const u of users) {
           if (!u?.id || !u.publicKeys?.length) continue;
+          if (String(u.id) === String(currentUser.id)) continue;
           audienceMap.set(String(u.id), {
-            id: u.id,
+            id: String(u.id),
             username: u.username,
             publicKeys: u.publicKeys,
           });
         }
         const audience = [...audienceMap.values()];
-        if (!audience[0].publicKeys?.length) {
-          throw new Error('Your account is missing X5 public keys');
-        }
         const envelopes = buildStoryEnvelopes(audience, sealed.keyB64, sealed.ivB64);
 
         form.append(
           'file',
-          new Blob([sealed.cipherBytes], {
-            type: file.type || 'application/octet-stream',
-          }),
+          new Blob([sealed.cipherBytes], { type: 'application/octet-stream' }),
           file.name || 'story.bin'
         );
         form.append('sealed', 'true');
@@ -292,7 +344,7 @@ export default function StoriesRail({ currentUser, users = [], onError }) {
 function StoryViewer({ group, startIndex, currentUserId, onClose, onDeleted }) {
   const [index, setIndex] = useState(startIndex || 0);
   const [mediaUrl, setMediaUrl] = useState(null);
-  const [sealedBlocked, setSealedBlocked] = useState(false);
+  const [blockedReason, setBlockedReason] = useState('');
   const story = group.items[index];
   const isOwn = String(group.user?.id) === String(currentUserId);
 
@@ -300,25 +352,20 @@ function StoryViewer({ group, startIndex, currentUserId, onClose, onDeleted }) {
     let cancelled = false;
     let objectUrl;
     setMediaUrl(null);
-    setSealedBlocked(false);
+    setBlockedReason('');
 
     (async () => {
       if (story.sealed) {
         const unlocked = unlockStoryKey(story, currentUserId);
         const ivB64 = unlocked?.ivB64 || story.contentIv;
         if (!unlocked?.keyB64 || !ivB64) {
-          setSealedBlocked(true);
+          setBlockedReason('Sealed story — no envelope for your keys');
           return;
         }
-        const token = getToken();
-        const res = await fetch(`${API_BASE}/stories/${story.id}/media`, {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        const res = await client.get(`/stories/${story.id}/media`, {
+          responseType: 'arraybuffer',
         });
-        if (!res.ok) {
-          setSealedBlocked(true);
-          return;
-        }
-        const cipherBytes = new Uint8Array(await res.arrayBuffer());
+        const cipherBytes = new Uint8Array(res.data);
         const plain = await aesGcmDecryptBytes(cipherBytes, unlocked.keyB64, ivB64);
         if (cancelled) return;
         objectUrl = URL.createObjectURL(
@@ -328,19 +375,23 @@ function StoryViewer({ group, startIndex, currentUserId, onClose, onDeleted }) {
         return;
       }
 
-      const token = getToken();
-      const res = await fetch(`${API_BASE}/stories/${story.id}/media`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      if (!res.ok) throw new Error('Failed to load story media');
-      const blob = await res.blob();
+      const res = await client.get(`/stories/${story.id}/media`, { responseType: 'blob' });
       if (cancelled) return;
-      objectUrl = URL.createObjectURL(blob);
+      objectUrl = URL.createObjectURL(res.data);
       setMediaUrl(objectUrl);
-    })().catch(() => {
+    })().catch((err) => {
       if (!cancelled) {
         setMediaUrl(null);
-        if (story.sealed) setSealedBlocked(true);
+        if (story.sealed) {
+          const status = err?.response?.status;
+          if (status === 403) {
+            setBlockedReason('Sealed story — no envelope for your keys');
+          } else if (status === 404) {
+            setBlockedReason('Story media is missing on the server');
+          } else {
+            setBlockedReason('Could not decrypt this sealed story');
+          }
+        }
       }
     });
     return () => {
@@ -389,8 +440,8 @@ function StoryViewer({ group, startIndex, currentUserId, onClose, onDeleted }) {
           ))}
         </div>
         <div className="story-viewer-media">
-          {sealedBlocked && <p className="empty-hint">Sealed story — no envelope for your keys</p>}
-          {!sealedBlocked && !mediaUrl && <p className="empty-hint">Loading…</p>}
+          {blockedReason && <p className="empty-hint">{blockedReason}</p>}
+          {!blockedReason && !mediaUrl && <p className="empty-hint">Loading…</p>}
           {mediaUrl && story.mediaType === 'image' && <img src={mediaUrl} alt="" />}
           {mediaUrl && story.mediaType === 'video' && <video src={mediaUrl} autoPlay controls />}
           {mediaUrl && story.mediaType === 'audio' && <audio src={mediaUrl} autoPlay controls />}

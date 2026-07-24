@@ -1211,21 +1211,53 @@ export default function Chat() {
           finalPayload = payload;
         },
       });
-      if (!finalPayload?.content || !finalPayload.receipt || !finalPayload.requestId) {
-        throw new Error('QuantumAI did not return a signed response');
+      if (!finalPayload?.content?.trim()) {
+        throw new Error('QuantumAI returned an empty response');
       }
-      const { data: storedAnswer } = await client.post('/messages/quantum-ai-response', {
-        content: finalPayload.content,
-        contentHash: finalPayload.contentHash,
-        requestId: finalPayload.requestId,
-        receipt: finalPayload.receipt,
-        model: finalPayload.model,
-      });
+      if (finalPayload.receipt && finalPayload.requestId && finalPayload.contentHash) {
+        const { data: storedAnswer } = await client.post('/messages/quantum-ai-response', {
+          content: finalPayload.content,
+          contentHash: finalPayload.contentHash,
+          requestId: finalPayload.requestId,
+          receipt: finalPayload.receipt,
+          model: finalPayload.model,
+        });
+        setMessages((current) =>
+          current.map((message) =>
+            message.id === assistantMessageId ? decorate(storedAnswer.data) : message
+          )
+        );
+      } else {
+        // Stream succeeded but AI backend could not sign a receipt (missing shared secret).
+        // Keep the visible reply so chat is usable; history won't be sealed until secrets match.
+        setMessages((current) =>
+          current.map((message) =>
+            message.id === assistantMessageId
+              ? {
+                  ...message,
+                  text: finalPayload.content,
+                  kind: 'ai',
+                }
+              : message
+          )
+        );
+        showToast(
+          'QuantumAI replied, but QUANTUM_AI_SERVICE_SECRET is missing/mismatched — reply was not sealed into chat history',
+          'info'
+        );
+      }
+    } catch (err) {
+      if (err?.name === 'AbortError') {
+        setMessages((current) => current.filter((message) => message.id !== assistantMessageId));
+        return;
+      }
       setMessages((current) =>
-        current.map((message) =>
-          message.id === assistantMessageId ? decorate(storedAnswer.data) : message
+        current.filter(
+          (message) => message.id !== assistantMessageId || Boolean(String(message.text || '').trim())
         )
       );
+      showToast(err instanceof Error ? err.message : 'QuantumAI failed to respond', 'error');
+      throw err;
     } finally {
       setAiBusy(false);
       aiAbortRef.current = null;
@@ -1263,27 +1295,33 @@ export default function Chat() {
           finalPayload = payload;
         },
       });
-      if (
-        !finalPayload?.content ||
-        !finalPayload.receipt ||
-        !finalPayload.contentHash ||
-        !finalPayload.requestId
-      ) {
-        throw new Error('QuantumAI did not return a signed group response');
+      if (!finalPayload?.content?.trim()) {
+        throw new Error('QuantumAI returned an empty group response');
       }
-      const { data } = await client.post(`/groups/${selected.id}/quantum-ai-response`, {
-        content: finalPayload.content,
-        contentHash: finalPayload.contentHash,
-        requestId: finalPayload.requestId,
-        receipt: finalPayload.receipt,
-        model: finalPayload.model,
-      });
-      setMessages((current) => {
-        const id = String(data.data.id || data.data._id);
-        return current.some((message) => String(message.id || message._id) === id)
-          ? current
-          : [...current, decorate(data.data)];
-      });
+      if (finalPayload.receipt && finalPayload.contentHash && finalPayload.requestId) {
+        const { data } = await client.post(`/groups/${selected.id}/quantum-ai-response`, {
+          content: finalPayload.content,
+          contentHash: finalPayload.contentHash,
+          requestId: finalPayload.requestId,
+          receipt: finalPayload.receipt,
+          model: finalPayload.model,
+        });
+        setMessages((current) => {
+          const id = String(data.data.id || data.data._id);
+          return current.some((message) => String(message.id || message._id) === id)
+            ? current
+            : [...current, decorate(data.data)];
+        });
+      } else {
+        showToast(
+          'QuantumAI replied, but QUANTUM_AI_SERVICE_SECRET is missing/mismatched — group reply was not sealed',
+          'info'
+        );
+      }
+    } catch (err) {
+      if (err?.name !== 'AbortError') {
+        showToast(err instanceof Error ? err.message : 'QuantumAI group reply failed', 'error');
+      }
     } finally {
       setAiBusy(false);
       aiAbortRef.current = null;
