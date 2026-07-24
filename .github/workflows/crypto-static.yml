@@ -28,12 +28,13 @@ jobs:
           fi
           echo "OK: no plaintext call signaling emits detected"
 
-      - name: Require sealed call helper usage
+      - name: Require sealed call envelope helpers
         run: |
           set -euo pipefail
-          test -f src/hooks/useWebRTCCall.js
-          grep -q "sealForPeer\|envelope" src/hooks/useWebRTCCall.js
-          echo "OK: useWebRTCCall uses sealed envelopes"
+          # Backend validates call signaling via sealed-envelope helpers (client hook lives in frontend).
+          test -f src/utils/callEnvelope.js
+          grep -q "isSealedEnvelope\|hasForbiddenPlaintextSignaling" src/utils/callEnvelope.js
+          echo "OK: callEnvelope.js enforces sealed call envelopes"
 
       - name: Forbid private key console logging
         run: |
