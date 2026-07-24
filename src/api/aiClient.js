@@ -1,6 +1,22 @@
 import { getToken } from '../crypto/keyStorage.js';
 
-const AI_API_BASE = import.meta.env.VITE_AI_API_URL || 'http://localhost:5001/api/v1';
+/**
+ * QuantumAI API base URL.
+ * Dev defaults to local AI backend; production must never fall back to localhost
+ * (CSP on chat.quantumlogicslimited.com blocks http://localhost:5001).
+ */
+function resolveAiApiBase() {
+  const fromEnv = String(import.meta.env.VITE_AI_API_URL || '').trim().replace(/\/$/, '');
+  if (import.meta.env.DEV) {
+    return fromEnv || 'http://localhost:5001/api/v1';
+  }
+  if (fromEnv && !/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?\b/i.test(fromEnv)) {
+    return fromEnv;
+  }
+  return 'https://ai.quantumlogicslimited.com/api/v1';
+}
+
+const AI_API_BASE = resolveAiApiBase();
 
 function headers(json = false) {
   const token = getToken();
