@@ -1,11 +1,5 @@
-import 'dotenv/config';
-import { createApp } from '../src/app.js';
-import { connectDB } from '../src/config/db.js';
-
-// No socket.io here: Vercel's serverless functions can't hold the persistent
-// connections it needs. The app still works over plain REST — sendMessage
-// just skips the realtime push (see messageController.js).
-const app = createApp();
+// Intentionally minimal top-level imports so OPTIONS never depends on
+// Express/Mongoose boot. Heavier modules load only for real requests.
 
 const STATIC_ALLOWED_ORIGINS = [
   'http://localhost:5173',
@@ -40,9 +34,25 @@ function applyCorsHeaders(req, res) {
   res.setHeader('Access-Control-Max-Age', '86400');
 }
 
+function sendJson(res, status, body) {
+  res.setHeader('Content-Type', 'application/json');
+  res.statusCode = status;
+  res.end(JSON.stringify(body));
+}
+
+let appPromise;
+
+async function getApp() {
+  if (!appPromise) {
+    await import('dotenv/config');
+    const { createApp } = await import('../src/app.js');
+    appPromise = createApp();
+  }
+  return appPromise;
+}
+
 export default async function handler(req, res) {
-  // Preflight must succeed even when Mongo is down — otherwise browsers
-  // report a misleading CORS error instead of the real 503.
+  // Preflight must succeed with zero app/DB dependencies.
   if (req.method === 'OPTIONS') {
     applyCorsHeaders(req, res);
     res.statusCode = 204;
@@ -51,15 +61,22 @@ export default async function handler(req, res) {
   }
 
   try {
+    await import('dotenv/config');
+    const { connectDB } = await import('../src/config/db.js');
     await connectDB();
   } catch (err) {
     console.error('Database connection failed:', err);
     applyCorsHeaders(req, res);
-    res.setHeader('Content-Type', 'application/json');
-    res.statusCode = 503;
-    res.end(JSON.stringify({ success: false, error: 'Database unavailable' }));
+    sendJson(res, 503, { success: false, error: 'Database unavailable' });
     return;
   }
 
-  return app(req, res);
+  try {
+    const app = await getApp();
+    return app(req, res);
+  } catch (err) {
+    console.error('App handler failed:', err);
+    applyCorsHeaders(req, res);
+    sendJson(res, 500, { success: false, error: 'Internal server error' });
+  }
 }
