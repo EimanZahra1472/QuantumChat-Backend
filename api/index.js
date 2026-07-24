@@ -1,5 +1,5 @@
-// Intentionally minimal top-level imports so OPTIONS never depends on
-// Express/Mongoose boot. Heavier modules load only for real requests.
+// No top-level app/db imports — OPTIONS must work even if Express/Mongo boot fails.
+// vercel.json includeFiles ensures src/** is present for dynamic imports.
 
 const STATIC_ALLOWED_ORIGINS = [
   'http://localhost:5173',
@@ -40,19 +40,18 @@ function sendJson(res, status, body) {
   res.end(JSON.stringify(body));
 }
 
-let appPromise;
+let app;
 
 async function getApp() {
-  if (!appPromise) {
+  if (!app) {
     await import('dotenv/config');
     const { createApp } = await import('../src/app.js');
-    appPromise = createApp();
+    app = createApp();
   }
-  return appPromise;
+  return app;
 }
 
 export default async function handler(req, res) {
-  // Preflight must succeed with zero app/DB dependencies.
   if (req.method === 'OPTIONS') {
     applyCorsHeaders(req, res);
     res.statusCode = 204;
@@ -72,8 +71,8 @@ export default async function handler(req, res) {
   }
 
   try {
-    const app = await getApp();
-    return app(req, res);
+    const expressApp = await getApp();
+    return expressApp(req, res);
   } catch (err) {
     console.error('App handler failed:', err);
     applyCorsHeaders(req, res);
