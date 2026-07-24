@@ -5,16 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="description" content="QuantumChat — E2E Secure Messaging for Software Engineers with client-side X25519 key management" />
     <meta name="color-scheme" content="dark light" />
-    <script>
-      (function () {
-        try {
-          var stored = localStorage.getItem('theme') || localStorage.getItem('qc-theme') || 'dark';
-          document.documentElement.setAttribute('data-theme', stored);
-          document.body.classList.remove('theme-light', 'theme-dark', 'theme-eyecare');
-          document.body.classList.add('theme-' + stored);
-        } catch (e) {}
-      })();
-    </script>
+    <meta name="theme-color" content="#3b82f6" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob: https:; connect-src 'self' http://localhost:5000 http://127.0.0.1:5000 https: ws: wss:; media-src 'self' blob:; frame-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'"
+    />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <script src="/theme-init.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
