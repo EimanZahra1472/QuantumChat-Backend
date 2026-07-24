@@ -118,6 +118,7 @@ export default function CreateGroupModal({ users, onClose, onCreate }) {
           </button>
         </div>
 
+        <div className="create-group-body">
         <div className="create-group-field">
           <label className="create-group-label" htmlFor="group-name">
             Group name
@@ -252,6 +253,7 @@ export default function CreateGroupModal({ users, onClose, onCreate }) {
         </div>
 
         {error && <div className="auth-error create-group-error">{error}</div>}
+        </div>
 
         <div className="create-group-actions">
           <button
