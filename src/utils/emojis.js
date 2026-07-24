@@ -1,6 +1,10 @@
 export const QUICK_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🔥', '👏', '🙏'];
 
+<<<<<<< HEAD
 // Expanded emoji dataset with searchable keywords (keeps parity with frontend).
+=======
+// Expanded emoji dataset with searchable keywords.
+>>>>>>> 9d2bd3842e9cc45c912ac09908bd70f02464070f
 export const EMOJI_DATA = [
   { e: '😀', keywords: ['grin', 'smile', 'happy'] },
   { e: '😁', keywords: ['grin', 'teeth'] },
