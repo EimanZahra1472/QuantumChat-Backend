@@ -263,7 +263,10 @@ export default function Chat() {
       let text = null;
       let hasEnvelope = false;
 
-      if (raw.group && Array.isArray(raw.envelopes)) {
+      if (raw.group && typeof raw.content === 'string' && raw.content.length > 0) {
+        text = raw.content;
+        hasEnvelope = true;
+      } else if (raw.group && Array.isArray(raw.envelopes)) {
         const mine = raw.envelopes.find((e) => String(e.user) === String(user.id));
         hasEnvelope = Boolean(mine?.targetPublicKey);
         if (mine?.targetPublicKey) {
@@ -307,7 +310,9 @@ export default function Chat() {
               const parent = raw.replyTo;
               const parentMine = String(parent.from) === String(user.id);
               let parentText = null;
-              if (parent.group && Array.isArray(parent.envelopes)) {
+              if (parent.group && typeof parent.content === 'string' && parent.content.length > 0) {
+                parentText = parent.content;
+              } else if (parent.group && Array.isArray(parent.envelopes)) {
                 const mine = parent.envelopes.find((e) => String(e.user) === String(user.id));
                 if (mine?.targetPublicKey) {
                   const sk = resolveMySecretKey(mine.targetPublicKey);
@@ -840,6 +845,7 @@ export default function Chat() {
       } else if (archived.has(String(c.key))) {
         return false;
       }
+      if (filter === 'discover') return false;
       if (filter === 'groups' && c.type !== 'group') return false;
       if (filter === 'unread' && !c.unread) return false;
       if (q && !(c.searchText || '').includes(q)) return false;
@@ -885,8 +891,13 @@ export default function Chat() {
     }
   }
 
-  async function handleCreateGroup({ name, memberIds }) {
-    const { data } = await client.post('/groups', { name, memberIds });
+  async function handleCreateGroup({ name, memberIds, visibility, joinPolicy }) {
+    const { data } = await client.post('/groups', {
+      name,
+      memberIds,
+      visibility,
+      joinPolicy,
+    });
     const group = data.data;
     setGroups((prev) => {
       if (prev.some((g) => String(g.id) === String(group.id))) return prev;
@@ -900,6 +911,39 @@ export default function Chat() {
       subtitle: `${(group.members || []).length} members`,
       group,
     });
+  }
+
+  async function handleDiscoverJoin(item) {
+    if (!item?.id) return;
+    try {
+      if (item.joinPolicy === 'request') {
+        await client.post(`/groups/${item.id}/join-requests`);
+        showToast('Join request sent', 'success');
+        return { pending: true };
+      }
+      const { data } = await client.post(`/groups/${item.id}/join`);
+      const group = data.data;
+      setGroups((prev) => {
+        if (prev.some((g) => String(g.id) === String(group.id))) {
+          return prev.map((g) => (String(g.id) === String(group.id) ? group : g));
+        }
+        return [group, ...prev];
+      });
+      setFilter('all');
+      handleSelectConversation({
+        key: conversationKeyForGroup(group.id),
+        type: 'group',
+        id: group.id,
+        title: group.name,
+        subtitle: `${(group.members || []).length} members`,
+        group,
+      });
+      showToast(`Joined ${group.name}`, 'success');
+      return { joined: true, group };
+    } catch (err) {
+      showToast(err.response?.data?.error || err.message || 'Could not join group', 'error');
+      throw err;
+    }
   }
 
   function sealGroupEnvelopes(plaintext, group) {
@@ -939,8 +983,13 @@ export default function Chat() {
     if (!group) {
       throw new Error('Group not found');
     }
-    const envelopes = sealGroupEnvelopes(plaintext, group);
-    const payload = { envelopes, kind: kind || 'text' };
+    const isPublic = group.visibility === 'public';
+    const payload = { kind: kind || 'text' };
+    if (isPublic) {
+      payload.content = plaintext;
+    } else {
+      payload.envelopes = sealGroupEnvelopes(plaintext, group);
+    }
     if (mentionedUserIds?.length) payload.mentionedUserIds = mentionedUserIds;
     if (replyTo) payload.replyTo = replyTo.id || replyTo._id;
     if (disappearSeconds > 0) payload.expiresInSeconds = disappearSeconds;
@@ -1270,8 +1319,11 @@ export default function Chat() {
             showToast('Group not found', 'error');
             return;
           }
-          const envelopes = sealGroupEnvelopes(draft, group);
-          const { data } = await client.patch(`/messages/${editingMessage.id || editingMessage._id}`, { envelopes });
+          const editBody =
+            group.visibility === 'public'
+              ? { content: draft }
+              : { envelopes: sealGroupEnvelopes(draft, group) };
+          const { data } = await client.patch(`/messages/${editingMessage.id || editingMessage._id}`, editBody);
           setMessages((prev) =>
             prev.map((m) =>
               String(m.id || m._id) === String(editingMessage.id || editingMessage._id) ? decorate(data.data) : m
@@ -1988,9 +2040,14 @@ export default function Chat() {
       }
       const group = selected.group || groups.find((g) => String(g.id) === String(selected.id));
       const desc = (group?.description || '').trim();
-      if (desc) return desc.length > 72 ? `${desc.slice(0, 72)}…` : desc;
+      const publicHint = group?.visibility === 'public' ? 'Public · not encrypted' : null;
+      if (desc) {
+        const short = desc.length > 72 ? `${desc.slice(0, 72)}…` : desc;
+        return publicHint ? `${publicHint} · ${short}` : short;
+      }
       const count = (group?.members || []).length;
-      return count ? `${count} members` : 'Group chat';
+      const base = count ? `${count} members` : 'Group chat';
+      return publicHint ? `${publicHint} · ${base}` : base;
     }
     const peer = selected.peer || users.find((u) => String(u.id) === String(selected.id));
     if (peer?.systemRole === 'quantum_ai') return aiBusy ? 'generating…' : 'AI Assistant';
@@ -2178,6 +2235,7 @@ export default function Chat() {
             selectedKey={selected?.key}
             onSelect={handleSelectConversation}
             onCreateGroup={() => setShowCreateGroup(true)}
+            onDiscoverJoin={handleDiscoverJoin}
             onHide={handleHideChat}
             onBlock={handleBlockUser}
             onMute={(c) => setMutedKeys(toggleMuteChat(user.id, c.key))}

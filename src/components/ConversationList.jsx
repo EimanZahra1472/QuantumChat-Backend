@@ -1,5 +1,7 @@
+import { useCallback, useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import { Archive, Ban, BellOff, MoreVertical, Users, UserPlus, VolumeX, X } from 'lucide-react';
+import client from '../api/client.js';
 import UserAvatar from './UserAvatar.jsx';
 
 function isRecentlyActive(iso) {
@@ -23,6 +25,7 @@ const FILTERS = [
   { id: 'all', label: 'All' },
   { id: 'unread', label: 'Unread' },
   { id: 'groups', label: 'Groups' },
+  { id: 'discover', label: 'Discover' },
   { id: 'archived', label: 'Archived' },
 ];
 
@@ -33,6 +36,7 @@ export default function ConversationList({
   selectedKey,
   onSelect,
   onCreateGroup,
+  onDiscoverJoin,
   onHide,
   onBlock,
   onMute,
@@ -40,6 +44,52 @@ export default function ConversationList({
   loading,
   searchQuery = '',
 }) {
+  const [discoverItems, setDiscoverItems] = useState([]);
+  const [discoverLoading, setDiscoverLoading] = useState(false);
+  const [discoverError, setDiscoverError] = useState('');
+  const [joiningId, setJoiningId] = useState(null);
+
+  const loadDiscover = useCallback(async (q) => {
+    setDiscoverLoading(true);
+    setDiscoverError('');
+    try {
+      const { data } = await client.get('/groups/discover', {
+        params: q?.trim() ? { q: q.trim() } : undefined,
+      });
+      setDiscoverItems(data.data || []);
+    } catch (err) {
+      setDiscoverError(err.response?.data?.error || err.message || 'Failed to load public groups');
+      setDiscoverItems([]);
+    } finally {
+      setDiscoverLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (filter !== 'discover') return undefined;
+    loadDiscover(searchQuery);
+    return undefined;
+  }, [filter, searchQuery, loadDiscover]);
+
+  async function handleJoin(item) {
+    if (!onDiscoverJoin || joiningId) return;
+    setJoiningId(item.id);
+    try {
+      const result = await onDiscoverJoin(item);
+      if (result?.pending) {
+        setDiscoverItems((prev) =>
+          prev.map((g) => (String(g.id) === String(item.id) ? { ...g, joinRequestPending: true } : g))
+        );
+      } else if (result?.joined) {
+        setDiscoverItems((prev) => prev.filter((g) => String(g.id) !== String(item.id)));
+      }
+    } catch {
+      /* toast handled upstream */
+    } finally {
+      setJoiningId(null);
+    }
+  }
+
   return (
     <div className="conversation-panel">
       <div className="sidebar-filters" role="tablist" aria-label="Conversation filters">
@@ -64,7 +114,72 @@ export default function ConversationList({
         </button>
       </div>
 
-      {loading ? (
+      {filter === 'discover' ? (
+        <div className="user-list discover-list">
+          {discoverLoading ? (
+            [1, 2, 3].map((i) => (
+              <div key={i} className="user-list-item" style={{ pointerEvents: 'none' }}>
+                <div className="skeleton skeleton-avatar" />
+                <div className="skeleton-user-info">
+                  <div className="skeleton skeleton-line short" />
+                  <div className="skeleton skeleton-line medium" style={{ marginTop: '4px' }} />
+                </div>
+              </div>
+            ))
+          ) : discoverError ? (
+            <p className="empty-hint">{discoverError}</p>
+          ) : discoverItems.length === 0 ? (
+            <p className="empty-hint">
+              {searchQuery.trim()
+                ? 'No public groups match your search.'
+                : 'No public groups to join right now.'}
+            </p>
+          ) : (
+            discoverItems.map((g, index) => (
+              <motion.div
+                key={g.id}
+                className="user-list-item discover-item"
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.22, delay: Math.min(index * 0.02, 0.16) }}
+              >
+                <span className="avatar-container group">
+                  <span className="avatar group-avatar">
+                    <Users size={18} strokeWidth={2} aria-hidden="true" />
+                  </span>
+                </span>
+                <span className="user-list-meta">
+                  <span className="user-list-name-row">
+                    <span className="user-list-name">{g.name}</span>
+                    <span className="discover-badge">
+                      {g.joinPolicy === 'request' ? 'Request' : 'Open'}
+                    </span>
+                  </span>
+                  <span className="user-list-lastseen">
+                    {g.description?.trim()
+                      ? g.description.trim().slice(0, 64)
+                      : `${g.memberCount || 0} members`}
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  className="discover-join-btn"
+                  disabled={Boolean(joiningId) || g.joinRequestPending}
+                  onClick={() => handleJoin(g)}
+                >
+                  {g.joinRequestPending
+                    ? 'Pending'
+                    : joiningId === g.id
+                      ? '…'
+                      : g.joinPolicy === 'request'
+                        ? 'Request'
+                        : 'Join'}
+                </button>
+              </motion.div>
+            ))
+          )}
+        </div>
+      ) : loading ? (
         <div className="user-list">
           {[1, 2, 3, 4].map((i) => (
             <div key={i} className="user-list-item" style={{ pointerEvents: 'none' }}>
