@@ -1,10 +1,9 @@
-import fs from 'fs';
 import crypto from 'crypto';
 import mongoose from 'mongoose';
 import Message from '../models/Message.js';
 import Attachment from '../models/Attachment.js';
 import { areUsersBlocked } from './userController.js';
-import { resolveUploadPath } from '../middleware/upload.js';
+import { getStorage } from '../middleware/upload.js';
 import User from '../models/User.js';
 import Group from '../models/Group.js';
 import { sealForPublicKey } from '../utils/sealedBox.js';
@@ -86,10 +85,11 @@ async function removeAttachmentFiles(attachmentId) {
   if (!attachmentId) return;
   const attachment = await Attachment.findById(attachmentId);
   if (!attachment) return;
+  const storage = getStorage();
   try {
-    fs.unlink(resolveUploadPath(attachment.storagePath), () => {});
+    await storage.delete(attachment.storagePath);
     if (attachment.forSenderStoragePath) {
-      fs.unlink(resolveUploadPath(attachment.forSenderStoragePath), () => {});
+      await storage.delete(attachment.forSenderStoragePath);
     }
   } catch {
     // best-effort
