@@ -19,3 +19,18 @@ export const apiLimiter = rateLimit({
   legacyHeaders: false,
   message: { success: false, error: 'Too many requests, please try again shortly' },
 });
+
+/**
+ * Realtime sync polling limiter. Keyed by user id, not IP: clients poll this
+ * endpoint every couple of seconds, so the IP-keyed apiLimiter would make users
+ * behind one NAT starve each other. Must be mounted *after* requireAuth so
+ * req.user exists — the req.ip fallback only covers misordered mounts.
+ */
+export const syncLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 90,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => String(req.user?._id || req.ip),
+  message: { success: false, error: 'Too many sync requests, please try again shortly' },
+});
