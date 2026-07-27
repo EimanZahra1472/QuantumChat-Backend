@@ -40,19 +40,26 @@ export function createApp() {
     })
   );
 
-  // Always allow known Quantum product frontends, then merge CLIENT_URL.
+  // Always allow known Quantum product frontends, then merge CLIENT_URL / CORS_ORIGINS.
   // Passing an Error into the cors callback used to become a 500 because the
   // Express error handler ignored err.status — browsers on ai.* saw login 500s.
   const allowedOrigins = [
     ...new Set(
       [
         'http://localhost:5173',
+        'http://localhost:5174',
         'http://localhost:5175',
         'https://chat.quantumlogicslimited.com',
         'https://ai.quantumlogicslimited.com',
         'https://quantum-chat.vercel.app',
+        'https://quantum-chat-frontend.vercel.app',
+        'https://quantum-chat-frontend-mu.vercel.app',
         'https://quantum-ai-frontend.vercel.app',
         ...String(process.env.CLIENT_URL || '')
+          .split(',')
+          .map((origin) => origin.trim())
+          .filter(Boolean),
+        ...String(process.env.CORS_ORIGINS || '')
           .split(',')
           .map((origin) => origin.trim())
           .filter(Boolean),
@@ -66,13 +73,20 @@ export function createApp() {
         // Deny without throwing — avoids turning CORS misses into HTTP 500.
         return callback(null, false);
       },
+      methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'X-User-Id'],
+      optionsSuccessStatus: 204,
     })
   );
   app.use(express.json({ limit: '100kb' }));
 
   app.get('/api/health', (req, res) => res.json({ success: true, data: { status: 'ok' } }));
 
-  app.use('/api/auth', authLimiter, authRoutes);
+  // Skip rate limiting on CORS preflight — OPTIONS must always be cheap/fast.
+  app.use('/api/auth', (req, res, next) => {
+    if (req.method === 'OPTIONS') return next();
+    return authLimiter(req, res, next);
+  }, authRoutes);
   app.use('/api/users', userRoutes);
   app.use('/api/messages', messageRoutes);
   app.use('/api/attachments', attachmentRoutes);

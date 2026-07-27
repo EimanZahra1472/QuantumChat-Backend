@@ -29,8 +29,8 @@ import { apiLimiter } from '../middleware/rateLimiter.js';
 
 const router = Router();
 
-router.use(requireAuth);
 router.use(apiLimiter);
+router.use(requireAuth);
 router.get('/', listUsers);
 router.get('/me', getMe);
 router.get('/me/public-keys', getMyPublicKeys);
