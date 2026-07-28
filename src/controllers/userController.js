@@ -526,9 +526,7 @@ export async function declineFriendRequest(req, res) {
     res.status(500).json({ success: false, error: err.message });
   }
 }
-export async function getMe(req, res) {
-  res.json({ success: true, data: req.user.toSelfJSON() });
-}
+
 export async function cancelFriendRequest(req, res) {
   try {
     const { id } = req.params;
