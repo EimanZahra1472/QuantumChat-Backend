@@ -54,14 +54,15 @@ export async function getMyPublicKeys(req, res) {
 }
 
 export async function getUser(req, res) {
-  const user = await User.findById(req.params.id).select(PUBLIC_FIELDS);
+  const id = toObjectId(req.params.id);
+  if (!id) return res.status(400).json({ success: false, error: 'Invalid user id' });
+  const user = await User.findById(id).select(PUBLIC_FIELDS);
   if (!user) return res.status(404).json({ success: false, error: 'User not found' });
   if (await areUsersBlocked(req.user._id, user._id)) {
     return res.status(403).json({ success: false, error: 'User is blocked' });
   }
   res.json({ success: true, data: user.toPublicJSON() });
 }
-
 export async function updateProfile(req, res) {
   try {
     const { displayName, bio, phone, username, privacy } = req.body || {};
@@ -132,8 +133,8 @@ export async function listBlockedUsers(req, res) {
 }
 
 export async function blockUser(req, res) {
-  const { id } = req.params;
-  if (!mongoose.isValidObjectId(id)) {
+  const id = toObjectId(req.params.id);
+  if (!id) {
     return res.status(400).json({ success: false, error: 'Invalid user id' });
   }
   if (String(id) === String(req.user._id)) {
@@ -152,8 +153,8 @@ export async function blockUser(req, res) {
 }
 
 export async function unblockUser(req, res) {
-  const { id } = req.params;
-  if (!mongoose.isValidObjectId(id)) {
+  const id = toObjectId(req.params.id);
+  if (!id) {
     return res.status(400).json({ success: false, error: 'Invalid user id' });
   }
 
@@ -222,8 +223,8 @@ export async function deleteAvatar(req, res) {
 
 export async function getAvatar(req, res) {
   try {
-    const { id } = req.params;
-    if (!mongoose.isValidObjectId(id)) {
+    const id = toObjectId(req.params.id);
+    if (!id) {
       return res.status(400).json({ success: false, error: 'Invalid user id' });
     }
     const user = await User.findById(id).select('avatarPath avatarMimeType');
@@ -414,14 +415,15 @@ async function acceptFriendRequestRecord(request, req) {
 export async function sendFriendRequest(req, res) {
   try {
     const { to } = req.body || {};
-    if (!mongoose.isValidObjectId(to)) {
+    const toId = toObjectId(to);
+    if (!toId) {
       return res.status(400).json({ success: false, error: 'Invalid user id' });
     }
-    if (String(to) === String(req.user._id)) {
+    if (String(toId) === String(req.user._id)) {
       return res.status(400).json({ success: false, error: 'You cannot friend yourself' });
     }
 
-    const target = await User.findById(to).select('_id isSystemUser');
+    const target = await User.findById(toId).select('_id isSystemUser');
     if (!target) return res.status(404).json({ success: false, error: 'User not found' });
     if (target.isSystemUser) {
       return res.status(400).json({ success: false, error: 'Cannot send a friend request to this account' });
@@ -467,7 +469,6 @@ export async function sendFriendRequest(req, res) {
     res.status(500).json({ success: false, error: err.message });
   }
 }
-
 export async function listFriendRequests(req, res) {
   try {
     const [incoming, outgoing] = await Promise.all([
@@ -488,8 +489,8 @@ export async function listFriendRequests(req, res) {
 
 export async function acceptFriendRequest(req, res) {
   try {
-    const { id } = req.params;
-    if (!mongoose.isValidObjectId(id)) {
+    const id = toObjectId(req.params.id);
+    if (!id) {
       return res.status(400).json({ success: false, error: 'Invalid request id' });
     }
     const request = await FriendRequest.findById(id);
@@ -508,8 +509,8 @@ export async function acceptFriendRequest(req, res) {
 }
 export async function declineFriendRequest(req, res) {
   try {
-    const { id } = req.params;
-    if (!mongoose.isValidObjectId(id)) {
+    const id = toObjectId(req.params.id);
+    if (!id) {
       return res.status(400).json({ success: false, error: 'Invalid request id' });
     }
     const request = await FriendRequest.findById(id);
@@ -529,8 +530,8 @@ export async function declineFriendRequest(req, res) {
 
 export async function cancelFriendRequest(req, res) {
   try {
-    const { id } = req.params;
-    if (!mongoose.isValidObjectId(id)) {
+    const id = toObjectId(req.params.id);
+    if (!id) {
       return res.status(400).json({ success: false, error: 'Invalid request id' });
     }
     const request = await FriendRequest.findById(id);
@@ -549,8 +550,8 @@ export async function cancelFriendRequest(req, res) {
 
 export async function removeFriend(req, res) {
   try {
-    const { id } = req.params;
-    if (!mongoose.isValidObjectId(id)) {
+    const id = toObjectId(req.params.id);
+    if (!id) {
       return res.status(400).json({ success: false, error: 'Invalid user id' });
     }
     if (String(id) === String(req.user._id)) {
@@ -571,7 +572,7 @@ export async function removeFriend(req, res) {
     io?.to(String(id)).emit('friend:removed', { by: String(req.user._id) });
     const me = await User.findById(req.user._id);
     res.json({ success: true, data: { id, removed: true, me: me.toSelfJSON() } });
-  }  catch (err) {
+  } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 }
