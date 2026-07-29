@@ -1,7 +1,7 @@
-import mongoose from 'mongoose';
 import CallSignal from '../models/CallSignal.js';
 import User from '../models/User.js';
 import { isSealedEnvelope } from '../utils/callEnvelope.js';
+import { toObjectId } from '../utils/toObjectId.js';
 
 const ALLOWED_EVENTS = new Set([
   'call:invite',
@@ -31,7 +31,8 @@ function toClientSignal(signal) {
 export async function createCallSignal(req, res) {
   try {
     const { to, callId, event, envelope } = req.body || {};
-    if (!mongoose.isValidObjectId(to) || String(to) === String(req.user._id)) {
+    const recipientId = toObjectId(to);
+    if (!recipientId || recipientId.equals(req.user._id)) {
       return res.status(400).json({ success: false, error: 'Invalid call recipient' });
     }
     if (!ALLOWED_EVENTS.has(event)) {
@@ -44,14 +45,14 @@ export async function createCallSignal(req, res) {
       return res.status(400).json({ success: false, error: 'Call signal must be X5 sealed' });
     }
 
-    const recipientExists = await User.exists({ _id: to });
+    const recipientExists = await User.exists({ _id: recipientId });
     if (!recipientExists) {
       return res.status(404).json({ success: false, error: 'Call recipient not found' });
     }
 
     const signal = await CallSignal.create({
       from: req.user._id,
-      to,
+      to: recipientId,
       callId: callId.trim(),
       event,
       envelope: {
