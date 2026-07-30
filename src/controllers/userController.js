@@ -426,14 +426,12 @@ async function acceptFriendRequestRecord(request, req) {
 export async function sendFriendRequest(req, res) {
   try {
     const { to } = req.body || {};
-    if (!mongoose.isValidObjectId(to)) {
+    const targetId = toObjectId(to);
+    if (!targetId || targetId.equals(req.user._id)) {
       return res.status(400).json({ success: false, error: 'Invalid user id' });
     }
-    if (String(to) === String(req.user._id)) {
-      return res.status(400).json({ success: false, error: 'You cannot friend yourself' });
-    }
 
-    const target = await User.findById(to).select('_id isSystemUser');
+    const target = await User.findById(targetId).select('_id isSystemUser');
     if (!target) return res.status(404).json({ success: false, error: 'User not found' });
     if (target.isSystemUser) {
       return res.status(400).json({ success: false, error: 'Cannot send a friend request to this account' });
@@ -500,11 +498,11 @@ export async function listFriendRequests(req, res) {
 
 export async function acceptFriendRequest(req, res) {
   try {
-    const { id } = req.params;
-    if (!mongoose.isValidObjectId(id)) {
+    const requestId = toObjectId(req.params.id);
+    if (!requestId) {
       return res.status(400).json({ success: false, error: 'Invalid request id' });
     }
-    const request = await FriendRequest.findById(id);
+    const request = await FriendRequest.findById(requestId);
     if (!request || request.status !== 'pending') {
       return res.status(404).json({ success: false, error: 'Friend request not found' });
     }
@@ -520,11 +518,11 @@ export async function acceptFriendRequest(req, res) {
 }
 export async function declineFriendRequest(req, res) {
   try {
-    const { id } = req.params;
-    if (!mongoose.isValidObjectId(id)) {
+    const requestId = toObjectId(req.params.id);
+    if (!requestId) {
       return res.status(400).json({ success: false, error: 'Invalid request id' });
     }
-    const request = await FriendRequest.findById(id);
+    const request = await FriendRequest.findById(requestId);
     if (!request || request.status !== 'pending') {
       return res.status(404).json({ success: false, error: 'Friend request not found' });
     }
@@ -541,11 +539,11 @@ export async function declineFriendRequest(req, res) {
 
 export async function cancelFriendRequest(req, res) {
   try {
-    const { id } = req.params;
-    if (!mongoose.isValidObjectId(id)) {
+    const requestId = toObjectId(req.params.id);
+    if (!requestId) {
       return res.status(400).json({ success: false, error: 'Invalid request id' });
     }
-    const request = await FriendRequest.findById(id);
+    const request = await FriendRequest.findById(requestId);
     if (!request || request.status !== 'pending') {
       return res.status(404).json({ success: false, error: 'Friend request not found' });
     }
@@ -553,7 +551,7 @@ export async function cancelFriendRequest(req, res) {
       return res.status(403).json({ success: false, error: 'Not authorized to cancel this request' });
     }
     await request.deleteOne();
-    res.json({ success: true, data: { id, cancelled: true } });
+    res.json({ success: true, data: { id: requestId, cancelled: true } });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -561,29 +559,26 @@ export async function cancelFriendRequest(req, res) {
 
 export async function removeFriend(req, res) {
   try {
-    const { id } = req.params;
-    if (!mongoose.isValidObjectId(id)) {
+    const friendId = toObjectId(req.params.id);
+    if (!friendId || friendId.equals(req.user._id)) {
       return res.status(400).json({ success: false, error: 'Invalid user id' });
     }
-    if (String(id) === String(req.user._id)) {
-      return res.status(400).json({ success: false, error: 'Invalid request' });
-    }
 
-    const isFriend = (req.user.friends || []).some((f) => String(f) === String(id));
+    const isFriend = (req.user.friends || []).some((f) => String(f) === String(friendId));
     if (!isFriend) {
       return res.status(404).json({ success: false, error: 'Not currently friends with this user' });
     }
 
     await Promise.all([
-      User.updateOne({ _id: req.user._id }, { $pull: { friends: id } }),
-      User.updateOne({ _id: id }, { $pull: { friends: req.user._id } }),
+      User.updateOne({ _id: req.user._id }, { $pull: { friends: friendId } }),
+      User.updateOne({ _id: friendId }, { $pull: { friends: req.user._id } }),
     ]);
 
     const io = req.app.get('io');
-    io?.to(String(id)).emit('friend:removed', { by: String(req.user._id) });
+    io?.to(String(friendId)).emit('friend:removed', { by: String(req.user._id) });
     const me = await User.findById(req.user._id);
-    res.json({ success: true, data: { id, removed: true, me: me.toSelfJSON() } });
-  }  catch (err) {
+    res.json({ success: true, data: { id: friendId, removed: true, me: me.toSelfJSON() } });
+  } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 }
