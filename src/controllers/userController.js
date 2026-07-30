@@ -53,14 +53,15 @@ export async function getMyPublicKeys(req, res) {
 }
 
 export async function getUser(req, res) {
-  const user = await User.findById(req.params.id).select(PUBLIC_FIELDS);
+  const id = toObjectId(req.params.id);
+  if (!id) return res.status(400).json({ success: false, error: 'Invalid user id' });
+  const user = await User.findById(id).select(PUBLIC_FIELDS);
   if (!user) return res.status(404).json({ success: false, error: 'User not found' });
   if (await areUsersBlocked(req.user._id, user._id)) {
     return res.status(403).json({ success: false, error: 'User is blocked' });
   }
   res.json({ success: true, data: user.toPublicJSON() });
 }
-
 export async function updateProfile(req, res) {
   try {
     const { displayName, bio, phone, username, privacy } = req.body || {};
@@ -131,8 +132,8 @@ export async function listBlockedUsers(req, res) {
 }
 
 export async function blockUser(req, res) {
-  const { id } = req.params;
-  if (!mongoose.isValidObjectId(id)) {
+  const id = toObjectId(req.params.id);
+  if (!id) {
     return res.status(400).json({ success: false, error: 'Invalid user id' });
   }
   if (String(id) === String(req.user._id)) {
@@ -151,8 +152,8 @@ export async function blockUser(req, res) {
 }
 
 export async function unblockUser(req, res) {
-  const { id } = req.params;
-  if (!mongoose.isValidObjectId(id)) {
+  const id = toObjectId(req.params.id);
+  if (!id) {
     return res.status(400).json({ success: false, error: 'Invalid user id' });
   }
 
@@ -235,8 +236,8 @@ export async function deleteAvatar(req, res) {
 
 export async function getAvatar(req, res) {
   try {
-    const { id } = req.params;
-    if (!mongoose.isValidObjectId(id)) {
+    const id = toObjectId(req.params.id);
+    if (!id) {
       return res.status(400).json({ success: false, error: 'Invalid user id' });
     }
     const user = await User.findById(id).select('avatarPath avatarMimeType');
@@ -477,7 +478,6 @@ export async function sendFriendRequest(req, res) {
     res.status(500).json({ success: false, error: err.message });
   }
 }
-
 export async function listFriendRequests(req, res) {
   try {
     const [incoming, outgoing] = await Promise.all([
