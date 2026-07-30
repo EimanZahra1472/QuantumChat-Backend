@@ -25,7 +25,7 @@ const storySchema = new mongoose.Schema(
     storagePath: { type: String, required: true },
     storageProvider: {
       type: String,
-      enum: ['local', 'google-drive'],
+      enum: ['local', 'google-drive', 'memory'],
       default: 'google-drive',
     },
     durationMs: { type: Number, default: 0, max: MAX_DURATION_MS },
