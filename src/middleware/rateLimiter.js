@@ -50,6 +50,6 @@ export const callSignalLimiter = rateLimit({
   limit: 120,
   standardHeaders: true,
   legacyHeaders: false,
-  skip: (req) => req.method === 'OPTIONS',
-  message: { success: false, error: 'Too many call signaling requests' },
+  skip: (req) => req.method === "OPTIONS",
+  message: { success: false, error: "Too many call signaling requests" },
 });
