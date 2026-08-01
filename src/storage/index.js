@@ -25,11 +25,19 @@ export function getStorage() {
     return cached;
   }
   const folderId = normalizeDriveFolderId(process.env.GOOGLE_DRIVE_FOLDER_ID);
-  const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-  const key = process.env.GOOGLE_PRIVATE_KEY;
+  const email = String(process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || '').trim();
+  const key = String(process.env.GOOGLE_PRIVATE_KEY || '')
+    .trim()
+    .replace(/^["']|["']$/g, '')
+    .replace(/\\n/g, '\n');
   if (!folderId || !email || !key) {
+    const missing = [
+      !folderId && 'GOOGLE_DRIVE_FOLDER_ID',
+      !email && 'GOOGLE_SERVICE_ACCOUNT_EMAIL',
+      !key && 'GOOGLE_PRIVATE_KEY',
+    ].filter(Boolean);
     throw new Error(
-      'Google Drive storage requires GOOGLE_DRIVE_FOLDER_ID, GOOGLE_SERVICE_ACCOUNT_EMAIL, and GOOGLE_PRIVATE_KEY'
+      `Google Drive storage missing ${missing.join(', ')}. Add them to backend/.env and restart the server.`
     );
   }
   cached = new GoogleDriveStorageAdapter(folderId, email, key);
