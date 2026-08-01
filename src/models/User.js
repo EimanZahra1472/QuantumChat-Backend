@@ -171,8 +171,12 @@ userSchema.methods.toPublicJSON = function toPublicJSON(viewerId) {
   if (lastSeenSetting === 'everyone') {
     showLastSeen = true;
   } else if (lastSeenSetting === 'friends' && viewerId) {
-    const friendIds = (this.friends || []).map((f) => String(f._id || f));
-    showLastSeen = friendIds.includes(String(viewerId));
+    if (String(viewerId) === String(this._id)) {
+      showLastSeen = true;
+    } else {
+      const friendIds = (this.friends || []).map((f) => String(f._id || f));
+      showLastSeen = friendIds.includes(String(viewerId));
+    }
   }
 
   let readReceiptsVal = 'everyone';
@@ -214,7 +218,7 @@ userSchema.methods.toPublicJSON = function toPublicJSON(viewerId) {
 
 userSchema.methods.toSelfJSON = function toSelfJSON() {
   return {
-    ...this.toPublicJSON(),
+    ...this.toPublicJSON(this._id),
     email: this.email,
     phone: this.phone || '',
     emailVerified: Boolean(this.emailVerified),
