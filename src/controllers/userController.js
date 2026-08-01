@@ -31,7 +31,7 @@ export async function listUsers(req, res) {
   const users = await User.find({
     _id: { $nin: [req.user._id, ...blockedIds] },
   }).select(PUBLIC_FIELDS);
-  res.json({ success: true, data: users.map((u) => u.toPublicJSON()) });
+  res.json({ success: true, data: users.map((u) => u.toPublicJSON(req.user._id)) });
 }
 
 export async function getMe(req, res) {
@@ -58,8 +58,82 @@ export async function getUser(req, res) {
   if (await areUsersBlocked(req.user._id, user._id)) {
     return res.status(403).json({ success: false, error: 'User is blocked' });
   }
-  res.json({ success: true, data: user.toPublicJSON() });
+  res.json({ success: true, data: user.toPublicJSON(req.user._id) });
 }
+
+export async function updatePrivacy(req, res) {
+  try {
+    const {
+      lastSeen,
+      readReceipts,
+      onlineStatus,
+      onlineStatusVisibleTo,
+      whoCanMessage,
+      discoverable,
+    } = req.body || {};
+
+    const user = req.user;
+    user.privacy = user.privacy || {};
+
+    if (lastSeen !== undefined) {
+      if (!['everyone', 'friends', 'nobody'].includes(lastSeen)) {
+        return res.status(400).json({ success: false, error: 'Invalid lastSeen privacy setting' });
+      }
+      user.privacy.lastSeen = lastSeen;
+    }
+
+    if (readReceipts !== undefined) {
+      if (!['everyone', 'friends', 'nobody'].includes(readReceipts)) {
+        return res.status(400).json({ success: false, error: 'Invalid readReceipts privacy setting' });
+      }
+      user.privacy.readReceipts = readReceipts;
+    }
+
+    if (onlineStatus !== undefined) {
+      if (!['everyone', 'friends', 'selected'].includes(onlineStatus)) {
+        return res.status(400).json({ success: false, error: 'Invalid onlineStatus privacy setting' });
+      }
+      user.privacy.onlineStatus = onlineStatus;
+    }
+
+    if (onlineStatusVisibleTo !== undefined) {
+      if (!Array.isArray(onlineStatusVisibleTo)) {
+        return res.status(400).json({ success: false, error: 'onlineStatusVisibleTo must be an array of user IDs' });
+      }
+      const validIds = [];
+      for (const idStr of onlineStatusVisibleTo) {
+        const oid = toObjectId(idStr);
+        if (!oid) {
+          return res.status(400).json({ success: false, error: 'Invalid user ID in onlineStatusVisibleTo' });
+        }
+        validIds.push(oid);
+      }
+      user.privacy.onlineStatusVisibleTo = validIds;
+    }
+
+    if (whoCanMessage !== undefined) {
+      if (!['everyone', 'friends', 'friendsOfFriends'].includes(whoCanMessage)) {
+        return res.status(400).json({ success: false, error: 'Invalid whoCanMessage privacy setting' });
+      }
+      user.privacy.whoCanMessage = whoCanMessage;
+    }
+
+    if (discoverable !== undefined) {
+      if (!['everyone', 'nobody'].includes(discoverable)) {
+        return res.status(400).json({ success: false, error: 'Invalid discoverable privacy setting' });
+      }
+      user.privacy.discoverable = discoverable;
+    }
+
+    user.markModified('privacy');
+    await user.save();
+    const updatedSelf = user.toSelfJSON();
+    res.json({ success: true, data: updatedSelf.privacy, user: updatedSelf });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+}
+
 export async function updateProfile(req, res) {
   try {
     const { displayName, bio, phone, username, privacy } = req.body || {};
@@ -96,15 +170,29 @@ export async function updateProfile(req, res) {
     }
     if (privacy && typeof privacy === 'object') {
       user.privacy = user.privacy || {};
-      if (privacy.lastSeen === 'everyone' || privacy.lastSeen === 'nobody') {
+      if (['everyone', 'friends', 'nobody'].includes(privacy.lastSeen)) {
         user.privacy.lastSeen = privacy.lastSeen;
       }
-      if (privacy.online === 'everyone' || privacy.online === 'nobody') {
-        user.privacy.online = privacy.online;
-      }
-      if (typeof privacy.readReceipts === 'boolean') {
+      if (['everyone', 'friends', 'nobody'].includes(privacy.readReceipts)) {
         user.privacy.readReceipts = privacy.readReceipts;
+      } else if (typeof privacy.readReceipts === 'boolean') {
+        user.privacy.readReceipts = privacy.readReceipts ? 'everyone' : 'nobody';
       }
+      if (['everyone', 'friends', 'selected'].includes(privacy.onlineStatus)) {
+        user.privacy.onlineStatus = privacy.onlineStatus;
+      } else if (['everyone', 'nobody'].includes(privacy.online)) {
+        user.privacy.onlineStatus = privacy.online === 'nobody' ? 'selected' : 'everyone';
+      }
+      if (Array.isArray(privacy.onlineStatusVisibleTo)) {
+        user.privacy.onlineStatusVisibleTo = privacy.onlineStatusVisibleTo.map(toObjectId).filter(Boolean);
+      }
+      if (['everyone', 'friends', 'friendsOfFriends'].includes(privacy.whoCanMessage)) {
+        user.privacy.whoCanMessage = privacy.whoCanMessage;
+      }
+      if (['everyone', 'nobody'].includes(privacy.discoverable)) {
+        user.privacy.discoverable = privacy.discoverable;
+      }
+      user.markModified('privacy');
     }
 
     await user.save();
@@ -361,7 +449,10 @@ export async function discoverUsers(req, res) {
 
     const users = await User.find(filter).select(PUBLIC_FIELDS).limit(100);
     const candidates = users.filter(
-      (u) => !blockedIds.includes(String(u._id)) && !friendIds.includes(String(u._id))
+      (u) =>
+        !blockedIds.includes(String(u._id)) &&
+        !friendIds.includes(String(u._id)) &&
+        u.privacy?.discoverable !== 'nobody'
     );
     const candidateIds = candidates.map((u) => u._id);
 
@@ -385,7 +476,7 @@ export async function discoverUsers(req, res) {
     const data = candidates.map((u) => {
       const info = statusByUserId.get(String(u._id));
       return {
-        ...u.toPublicJSON(),
+        ...u.toPublicJSON(req.user._id),
         requestStatus: info?.status || 'none',
         requestId: info?.requestId || null,
       };
@@ -416,7 +507,7 @@ export async function listFriends(req, res) {
       .map((id) => byId.get(String(id)))
       .filter(Boolean)
       .filter((u) => !blockedIds.has(String(u._id)))
-      .map((u) => u.toPublicJSON());
+      .map((u) => u.toPublicJSON(req.user._id));
 
     res.json({ success: true, data });
   } catch (err) {

@@ -22,6 +22,7 @@ import {
   removeFriend,
   getMe,
   getMyPublicKeys,
+  updatePrivacy,
 } from '../controllers/userController.js';
 import {
   getPushVapidPublicKey,
@@ -43,6 +44,7 @@ router.get('/', listUsers);
 router.get('/me', getMe);
 router.get('/me/public-keys', getMyPublicKeys);
 router.patch('/me', updateProfile);
+router.patch('/me/privacy', updatePrivacy);
 router.patch('/me/public-keys', updatePublicKeys);
 router.get('/me/blocked', listBlockedUsers);
 router.get('/me/export', exportAccountData);

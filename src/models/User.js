@@ -7,9 +7,12 @@ export const KEY_SET_SIZE = 5;
 
 const privacySchema = new mongoose.Schema(
   {
-    lastSeen: { type: String, enum: ['everyone', 'nobody'], default: 'everyone' },
-    online: { type: String, enum: ['everyone', 'nobody'], default: 'everyone' },
-    readReceipts: { type: Boolean, default: true },
+    lastSeen: { type: String, enum: ['everyone', 'friends', 'nobody'], default: 'everyone' },
+    readReceipts: { type: String, enum: ['everyone', 'friends', 'nobody'], default: 'everyone' },
+    onlineStatus: { type: String, enum: ['everyone', 'friends', 'selected'], default: 'everyone' },
+    onlineStatusVisibleTo: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+    whoCanMessage: { type: String, enum: ['everyone', 'friends', 'friendsOfFriends'], default: 'everyone' },
+    discoverable: { type: String, enum: ['everyone', 'nobody'], default: 'everyone' },
   },
   { _id: false }
 );
@@ -156,14 +159,33 @@ userSchema.methods.createPasswordResetToken = function createPasswordResetToken(
   return token;
 };
 
-userSchema.methods.toPublicJSON = function toPublicJSON() {
+userSchema.methods.toPublicJSON = function toPublicJSON(viewerId) {
   let publicKeys = Array.isArray(this.publicKeys) ? this.publicKeys.filter(Boolean) : [];
   if (publicKeys.length === 0 && this.publicKey) {
     publicKeys = [this.publicKey];
   }
 
   const privacy = this.privacy || {};
-  const showLastSeen = privacy.lastSeen !== 'nobody';
+  const lastSeenSetting = privacy.lastSeen || 'everyone';
+  let showLastSeen = false;
+  if (lastSeenSetting === 'everyone') {
+    showLastSeen = true;
+  } else if (lastSeenSetting === 'friends' && viewerId) {
+    const friendIds = (this.friends || []).map((f) => String(f._id || f));
+    showLastSeen = friendIds.includes(String(viewerId));
+  }
+
+  let readReceiptsVal = 'everyone';
+  if (typeof privacy.readReceipts === 'boolean') {
+    readReceiptsVal = privacy.readReceipts ? 'everyone' : 'nobody';
+  } else if (privacy.readReceipts) {
+    readReceiptsVal = privacy.readReceipts;
+  }
+
+  let onlineStatusVal = privacy.onlineStatus;
+  if (!onlineStatusVal) {
+    onlineStatusVal = privacy.online === 'nobody' ? 'selected' : (privacy.online || 'everyone');
+  }
 
   return {
     id: this._id,
@@ -175,9 +197,14 @@ userSchema.methods.toPublicJSON = function toPublicJSON() {
     lastLoginAt: showLastSeen ? this.lastLoginAt : null,
     hasAvatar: Boolean(this.avatarPath),
     privacy: {
-      lastSeen: privacy.lastSeen || 'everyone',
-      online: privacy.online || 'everyone',
-      readReceipts: privacy.readReceipts !== false,
+      lastSeen: lastSeenSetting,
+      readReceipts: readReceiptsVal,
+      onlineStatus: onlineStatusVal,
+      onlineStatusVisibleTo: Array.isArray(privacy.onlineStatusVisibleTo)
+        ? privacy.onlineStatusVisibleTo.map((id) => String(id._id || id))
+        : [],
+      whoCanMessage: privacy.whoCanMessage || 'everyone',
+      discoverable: privacy.discoverable || 'everyone',
     },
     isSystemUser: Boolean(this.isSystemUser),
     systemRole: this.systemRole || null,

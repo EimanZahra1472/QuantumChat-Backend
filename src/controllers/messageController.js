@@ -241,6 +241,54 @@ export async function checkForwardAllowed(req, res) {
   }
 }
 
+async function canUserMessageTarget(senderId, recipientId) {
+  const recipient = await User.findById(recipientId).select('privacy friends isSystemUser');
+  if (!recipient) return true;
+  if (recipient.isSystemUser) return true;
+
+  const setting = recipient.privacy?.whoCanMessage || 'everyone';
+  if (setting === 'everyone') return true;
+
+  const recipientFriendIds = (recipient.friends || []).map((f) => String(f._id || f));
+  const sId = String(senderId);
+
+  const isDirectFriend = recipientFriendIds.includes(sId);
+  if (setting === 'friends') {
+    return isDirectFriend;
+  }
+
+  if (setting === 'friendsOfFriends') {
+    if (isDirectFriend) return true;
+    const sender = await User.findById(senderId).select('friends');
+    if (!sender) return false;
+    const senderFriendIds = new Set((sender.friends || []).map((f) => String(f._id || f)));
+    for (const fId of recipientFriendIds) {
+      if (senderFriendIds.has(fId)) return true;
+    }
+    return false;
+  }
+
+  return true;
+}
+
+function canSendReadReceipt(readerUser, peerId) {
+  const setting = readerUser.privacy?.readReceipts;
+  let val = 'everyone';
+  if (typeof setting === 'boolean') {
+    val = setting ? 'everyone' : 'nobody';
+  } else if (setting) {
+    val = setting;
+  }
+
+  if (val === 'everyone') return true;
+  if (val === 'nobody') return false;
+  if (val === 'friends') {
+    const friends = (readerUser.friends || []).map((f) => String(f._id || f));
+    return friends.includes(String(peerId));
+  }
+  return true;
+}
+
 export async function sendMessage(req, res) {
   try {
     const {
@@ -268,6 +316,9 @@ export async function sendMessage(req, res) {
     }
     if (await areUsersBlocked(req.user._id, to)) {
       return res.status(403).json({ success: false, error: 'Cannot message a blocked user' });
+    }
+    if (!(await canUserMessageTarget(req.user._id, to))) {
+      return res.status(403).json({ success: false, error: "This user isn't accepting messages from you right now" });
     }
 
     const expiresAt = resolveExpiresAt(expiresInSeconds);
@@ -413,7 +464,7 @@ export async function getConversation(req, res) {
     const now = new Date();
     const deliveredIds = [];
     const readIds = [];
-    const allowReadReceipts = req.user.privacy?.readReceipts !== false;
+    const allowReadReceipts = canSendReadReceipt(req.user, peerOid);
     for (const msg of page) {
       if (String(msg.from) === String(userId) && String(msg.to) === String(req.user._id)) {
         if (!msg.deliveredAt) {
@@ -551,7 +602,7 @@ export async function markConversationRead(req, res) {
       return res.status(400).json({ success: false, error: 'Invalid user id' });
     }
     const now = new Date();
-    if (req.user.privacy?.readReceipts === false) {
+    if (!canSendReadReceipt(req.user, userId)) {
       const delivered = await Message.updateMany(
         { from: userId, to: req.user._id, deliveredAt: null },
         { $set: { deliveredAt: now } }
