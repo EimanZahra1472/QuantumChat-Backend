@@ -13,6 +13,7 @@ import {
   exportAccountData,
   deleteAccount,
   discoverUsers,
+  lookupContact,
   listFriends,
   listFriendRequests,
   sendFriendRequest,
@@ -33,7 +34,7 @@ import { getVault, putVault, deleteVault } from '../controllers/vaultController.
 import { createAiCapsule, listAiCapsules } from '../controllers/capsuleController.js';
 import { requireAuth } from '../middleware/auth.js';
 import { avatarUpload } from '../middleware/upload.js';
-import { apiLimiter } from '../middleware/rateLimiter.js';
+import { apiLimiter, contactLookupLimiter } from '../middleware/rateLimiter.js';
 
 const router = Router();
 
@@ -64,6 +65,7 @@ router.post('/:id/block', blockUser);
 router.delete('/:id/block', unblockUser);
 router.get('/:id/avatar', getAvatar);
 router.get('/discover', discoverUsers);
+router.get('/lookup', contactLookupLimiter, lookupContact);
 router.get('/friends', listFriends);
 router.get('/friend-requests', listFriendRequests);
 router.post('/friend-requests', sendFriendRequest);
