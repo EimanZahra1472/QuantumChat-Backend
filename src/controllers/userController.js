@@ -6,6 +6,7 @@ import FriendRequest from '../models/FriendRequest.js';
 import mongoose from 'mongoose';
 import { getStorage, newObjectName, safeImageContentType } from '../middleware/upload.js';
 import { toObjectId } from '../utils/toObjectId.js';
+import { conversationKey } from '../utils/conversationKey.js';
 
 const HEX_64 = /^[0-9a-f]{64}$/i;
 
@@ -113,7 +114,131 @@ export async function updateProfile(req, res) {
     res.status(500).json({ success: false, error: err.message });
   }
 }
+export async function getNotificationSettings(req, res) {
+  try {
+    res.json({ success: true, data: req.user.notificationSettings || {} });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+}
 
+export async function updateNotificationSettings(req, res) {
+  try {
+    const settings = req.body || {};
+    const user = req.user;
+    user.notificationSettings = user.notificationSettings || {};
+
+    const enums = {
+      messageNotifications: ['all', 'direct_only', 'all_except_reactions'],
+      statusNotifications: ['all', 'favorites_only', 'off'],
+      messagePreview: ['full', 'sender_only', 'hidden'],
+      vibration: ['on', 'off', 'custom'],
+      groupNotifications: ['all', 'mentions_only', 'important_only', 'off'],
+      badgeCount: ['show', 'hidden'],
+      priority: ['high', 'normal', 'silent'],
+    };
+
+    for (const [key, allowed] of Object.entries(enums)) {
+      if (settings[key] != null && allowed.includes(settings[key])) {
+        user.notificationSettings[key] = settings[key];
+      }
+    }
+
+    if (typeof settings.soundEnabled === 'boolean') {
+      user.notificationSettings.soundEnabled = settings.soundEnabled;
+    }
+    if (typeof settings.soundVolume === 'number' && settings.soundVolume >= 0 && settings.soundVolume <= 100) {
+      user.notificationSettings.soundVolume = settings.soundVolume;
+    }
+
+    if (settings.doNotDisturb && typeof settings.doNotDisturb === 'object') {
+      const dnd = user.notificationSettings.doNotDisturb || {};
+      if (typeof settings.doNotDisturb.enabled === 'boolean') dnd.enabled = settings.doNotDisturb.enabled;
+      if (typeof settings.doNotDisturb.startTime === 'string') dnd.startTime = settings.doNotDisturb.startTime;
+      if (typeof settings.doNotDisturb.endTime === 'string') dnd.endTime = settings.doNotDisturb.endTime;
+      if (Array.isArray(settings.doNotDisturb.allowedContacts)) {
+        dnd.allowedContacts = settings.doNotDisturb.allowedContacts;
+      }
+      user.notificationSettings.doNotDisturb = dnd;
+    }
+
+    if (settings.callNotifications && typeof settings.callNotifications === 'object') {
+      const call = user.notificationSettings.callNotifications || {};
+      const c = settings.callNotifications;
+      if (typeof c.voiceCallEnabled === 'boolean') call.voiceCallEnabled = c.voiceCallEnabled;
+      if (typeof c.videoCallEnabled === 'boolean') call.videoCallEnabled = c.videoCallEnabled;
+      if (typeof c.vibrateOnCall === 'boolean') call.vibrateOnCall = c.vibrateOnCall;
+      if (typeof c.missedCallReminders === 'boolean') call.missedCallReminders = c.missedCallReminders;
+      user.notificationSettings.callNotifications = call;
+    }
+
+    if (settings.webNotifications && typeof settings.webNotifications === 'object') {
+      const web = user.notificationSettings.webNotifications || {};
+      const w = settings.webNotifications;
+      if (typeof w.enabled === 'boolean') web.enabled = w.enabled;
+      if (typeof w.soundOnWeb === 'boolean') web.soundOnWeb = w.soundOnWeb;
+      if (typeof w.syncReadAcrossDevices === 'boolean') web.syncReadAcrossDevices = w.syncReadAcrossDevices;
+      user.notificationSettings.webNotifications = web;
+    }
+
+    await user.save();
+    res.json({ success: true, data: user.notificationSettings });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+}
+const MUTE_DURATIONS = {
+  '8h': 8 * 60 * 60 * 1000,
+  '1w': 7 * 24 * 60 * 60 * 1000,
+  always: null,
+};
+
+export async function muteChat(req, res) {
+  try {
+    const { peerId, groupId, duration } = req.body || {};
+    if (!MUTE_DURATIONS.hasOwnProperty(duration)) {
+      return res.status(400).json({ success: false, error: 'duration must be one of: 8h, 1w, always' });
+    }
+    if (!peerId && !groupId) {
+      return res.status(400).json({ success: false, error: 'peerId or groupId is required' });
+    }
+
+    const key = conversationKey(
+      groupId ? { group: groupId } : { from: req.user._id, to: peerId }
+    );
+    const ms = MUTE_DURATIONS[duration];
+    const expiresAt = ms == null ? null : new Date(Date.now() + ms);
+
+    const user = req.user;
+    user.mutedChats = (user.mutedChats || []).filter((m) => m.conversationKey !== key);
+    user.mutedChats.push({ conversationKey: key, expiresAt });
+    await user.save();
+
+    res.json({ success: true, data: user.toSelfJSON() });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+}
+
+export async function unmuteChat(req, res) {
+  try {
+    const { peerId, groupId } = req.body || {};
+    if (!peerId && !groupId) {
+      return res.status(400).json({ success: false, error: 'peerId or groupId is required' });
+    }
+    const key = conversationKey(
+      groupId ? { group: groupId } : { from: req.user._id, to: peerId }
+    );
+
+    const user = req.user;
+    user.mutedChats = (user.mutedChats || []).filter((m) => m.conversationKey !== key);
+    await user.save();
+
+    res.json({ success: true, data: user.toSelfJSON() });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+}
 export async function listBlockedUsers(req, res) {
   try {
     const me = await User.findById(req.user._id).populate('blockedUsers', 'username displayName avatarPath');
