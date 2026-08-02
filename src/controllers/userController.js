@@ -14,10 +14,17 @@ const HEX_64 = /^[0-9a-f]{64}$/i;
 const PUBLIC_FIELDS =
   'username displayName bio phone email publicKeys keyRotatedAt lastLoginAt blockedUsers friends avatarPath avatarMimeType privacy emailVerified isSystemUser systemRole verified';
 
-export async function areUsersBlocked(userAId, userBId) {
+export async function areUsersBlocked(userAId, userBId, aBlockedUsersHint) {
   const aId = toObjectId(userAId);
   const bId = toObjectId(userBId);
   if (!aId || !bId) return true;
+  const aBlockedList = aBlockedUsersHint;
+  if (aBlockedList) {
+    if (aBlockedList.some((id) => String(id) === String(bId))) return true;
+    const b = await User.findById(bId).select('blockedUsers');
+    if (!b) return true;
+    return (b.blockedUsers || []).some((id) => String(id) === String(aId));
+  }
   const [a, b] = await Promise.all([
     User.findById(aId).select('blockedUsers'),
     User.findById(bId).select('blockedUsers'),
