@@ -6,6 +6,7 @@ import FriendRequest from '../models/FriendRequest.js';
 import mongoose from 'mongoose';
 import { getStorage, newObjectName, safeImageContentType } from '../middleware/upload.js';
 import { toObjectId } from '../utils/toObjectId.js';
+import { isEmailLike, normalizePhone, phoneLookupVariants } from '../utils/phone.js';
 
 const HEX_64 = /^[0-9a-f]{64}$/i;
 
@@ -92,7 +93,11 @@ export async function updateProfile(req, res) {
       if (typeof phone !== 'string' || phone.length > 32) {
         return res.status(400).json({ success: false, error: 'Phone must be under 32 characters' });
       }
-      user.phone = phone.trim();
+      const normalized = normalizePhone(phone);
+      if (phone.trim() && (!normalized || normalized.replace(/\D/g, '').length < 7)) {
+        return res.status(400).json({ success: false, error: 'Enter a valid phone number' });
+      }
+      user.phone = normalized;
     }
     if (privacy && typeof privacy === 'object') {
       user.privacy = user.privacy || {};
@@ -392,6 +397,97 @@ export async function discoverUsers(req, res) {
     });
 
     res.json({ success: true, data });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+}
+
+/**
+ * Exact lookup by email or phone for Find Friends.
+ * Never returns the contact itself — only public profile + request status.
+ */
+export async function lookupContact(req, res) {
+  try {
+    const emailRaw = typeof req.query.email === 'string' ? req.query.email.trim().toLowerCase() : '';
+    const phoneRaw = typeof req.query.phone === 'string' ? req.query.phone.trim() : '';
+
+    if (!emailRaw && !phoneRaw) {
+      return res.status(400).json({
+        success: false,
+        error: 'Provide an email or phone number',
+      });
+    }
+    if (emailRaw && phoneRaw) {
+      return res.status(400).json({
+        success: false,
+        error: 'Search by email or phone, not both',
+      });
+    }
+
+    let target = null;
+
+    if (emailRaw) {
+      if (!isEmailLike(emailRaw)) {
+        return res.status(400).json({ success: false, error: 'Enter a valid email address' });
+      }
+      target = await User.findOne({
+        email: emailRaw,
+        emailVerified: true,
+        isSystemUser: { $ne: true },
+      }).select(PUBLIC_FIELDS);
+    } else {
+      const variants = phoneLookupVariants(phoneRaw);
+      if (!variants.length || variants[0].replace(/\D/g, '').length < 7) {
+        return res.status(400).json({ success: false, error: 'Enter a valid phone number' });
+      }
+      target = await User.findOne({
+        phone: { $in: variants },
+        isSystemUser: { $ne: true },
+      }).select(PUBLIC_FIELDS);
+    }
+
+    if (!target || String(target._id) === String(req.user._id)) {
+      return res.json({ success: true, data: null });
+    }
+
+    const blocked = await areUsersBlocked(req.user._id, target._id);
+    if (blocked) {
+      return res.json({ success: true, data: null });
+    }
+
+    const friendIds = new Set((req.user.friends || []).map((id) => String(id)));
+    const alreadyFriend = friendIds.has(String(target._id));
+
+    let requestStatus = alreadyFriend ? 'friends' : 'none';
+    let requestId = null;
+
+    if (!alreadyFriend) {
+      const pending = await FriendRequest.findOne({
+        status: 'pending',
+        $or: [
+          { from: req.user._id, to: target._id },
+          { to: req.user._id, from: target._id },
+        ],
+      });
+      if (pending) {
+        if (String(pending.from) === String(req.user._id)) {
+          requestStatus = 'pending_sent';
+        } else {
+          requestStatus = 'pending_received';
+        }
+        requestId = pending._id;
+      }
+    }
+
+    res.json({
+      success: true,
+      data: {
+        ...target.toPublicJSON(),
+        requestStatus,
+        requestId,
+        matchedBy: emailRaw ? 'email' : 'phone',
+      },
+    });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
