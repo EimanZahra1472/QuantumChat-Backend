@@ -242,7 +242,11 @@ export async function checkForwardAllowed(req, res) {
 }
 
 async function canUserMessageTarget(senderId, recipientId) {
-  const recipient = await User.findById(recipientId).select('privacy friends isSystemUser');
+  const recipientOid = toObjectId(recipientId);
+  const senderOid = toObjectId(senderId);
+  if (!recipientOid || !senderOid) return false;
+
+  const recipient = await User.findById(recipientOid).select('privacy friends isSystemUser');
   if (!recipient) return true;
   if (recipient.isSystemUser) return true;
 
@@ -250,7 +254,7 @@ async function canUserMessageTarget(senderId, recipientId) {
   if (setting === 'everyone') return true;
 
   const recipientFriendIds = (recipient.friends || []).map((f) => String(f._id || f));
-  const sId = String(senderId);
+  const sId = String(senderOid);
 
   const isDirectFriend = recipientFriendIds.includes(sId);
   if (setting === 'friends') {
@@ -259,7 +263,7 @@ async function canUserMessageTarget(senderId, recipientId) {
 
   if (setting === 'friendsOfFriends') {
     if (isDirectFriend) return true;
-    const sender = await User.findById(senderId).select('friends');
+    const sender = await User.findById(senderOid).select('friends');
     if (!sender) return false;
     const senderFriendIds = new Set((sender.friends || []).map((f) => String(f._id || f)));
     for (const fId of recipientFriendIds) {
