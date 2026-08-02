@@ -21,8 +21,12 @@ import {
   acceptFriendRequest,
   declineFriendRequest,
   removeFriend,
-  getMe,
+ getMe,
   getMyPublicKeys,
+  getNotificationSettings,
+  updateNotificationSettings,
+  muteChat,
+  unmuteChat,
 } from '../controllers/userController.js';
 import {
   getPushVapidPublicKey,
@@ -45,6 +49,10 @@ router.get('/me', getMe);
 router.get('/me/public-keys', getMyPublicKeys);
 router.patch('/me', updateProfile);
 router.patch('/me/public-keys', updatePublicKeys);
+router.get('/me/notification-settings', getNotificationSettings);
+router.put('/me/notification-settings', updateNotificationSettings);
+router.post('/me/mute', muteChat);
+router.post('/me/unmute', unmuteChat);
 router.get('/me/blocked', listBlockedUsers);
 router.get('/me/export', exportAccountData);
 router.delete('/me', deleteAccount);
