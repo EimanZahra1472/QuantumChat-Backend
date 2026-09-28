@@ -1,7 +1,6 @@
 import mongoose from 'mongoose';
 
 const HEX_64 = /^[0-9a-f]{64}$/i;
-
 const envelopeSchema = new mongoose.Schema(
   {
     ciphertext: { type: String, required: true },
@@ -11,7 +10,6 @@ const envelopeSchema = new mongoose.Schema(
   },
   { _id: false }
 );
-
 
 const reactionSchema = new mongoose.Schema(
   {
@@ -39,7 +37,6 @@ const memberEnvelopeSchema = new mongoose.Schema(
   },
   { _id: false }
 );
-
 const pollVoteSchema = new mongoose.Schema(
   {
     user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
@@ -47,7 +44,6 @@ const pollVoteSchema = new mongoose.Schema(
   },
   { _id: false }
 );
-
 const editHistoryEntrySchema = new mongoose.Schema(
   {
     forRecipient: { type: envelopeSchema },
@@ -83,9 +79,12 @@ const messageSchema = new mongoose.Schema(
     readBy: { type: [deliveryReceiptSchema], default: undefined },
     kind: {
       type: String,
-      enum: ['text', 'announcement', 'poll', 'event', 'file', 'ai', 'ai_note', 'system'],
+      enum: ['text', 'announcement', 'poll', 'event', 'file', 'ai', 'ai_note', 'system', 'story_mention'],
       default: 'text',
     },
+    // Set only when kind === 'story_mention' — lets the client render a
+    // "View Story" link/preview. Just an id reference, never sensitive.
+    storyRef: { type: mongoose.Schema.Types.ObjectId, ref: 'Story', default: undefined },
     // Attachment category snapshot at send time — lets "Clear chat" filter by
     // photo/video/voice/document without joining Attachment on every read.
     // Absent (undefined) for messages with no attachment (plain text).
