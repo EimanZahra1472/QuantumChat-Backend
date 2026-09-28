@@ -4,7 +4,7 @@ import path from 'path';
 import { deleteStoredObject, getStorage, isSafeImageMime, newObjectName, readStoredObject, safeImageContentType } from '../middleware/upload.js';
 import Story from '../models/Story.js';
 import User from '../models/User.js';
-import { notifyUser } from '../services/pushService.js';
+import { sendStoryMentionMessages } from '../services/storyMentionMessages.js';
 import { areUsersBlocked } from './userController.js';
 
 const HEX_64 = /^[0-9a-f]{64}$/i;
@@ -85,22 +85,6 @@ function visibleMentions(story, viewerId) {
       },
       visibility: m.visibility,
     }));
-}
-
-async function notifyMentionedUsers(story, authorUsername) {
-  const mentions = Array.isArray(story.mentions) ? story.mentions : [];
-  for (const m of mentions) {
-    const targetId = String(m.user?._id || m.user);
-    if (targetId === String(story.user?._id || story.user)) continue;
-    notifyUser(targetId, {
-      title: 'QuantumChat',
-      body: `${authorUsername || 'Someone'} mentioned you in their story`,
-      kind: 'story_mention',
-      conversationKey: `story-mention:${story._id}`,
-      url: `/stories/${story._id}`,
-      data: { storyId: String(story._id) },
-    }).catch(() => {});
-  }
 }
 
 function parseSealedFlag(value) {
@@ -422,7 +406,7 @@ export async function createStory(req, res) {
       if (io) {
         io.emit('story:new', { ...payload, mentions: visibleMentions(story, null) });
       }
-      await notifyMentionedUsers(story, req.user.username);
+      await sendStoryMentionMessages(io, story);
     }
 
     res.status(201).json({ success: true, data: payload });
@@ -936,7 +920,7 @@ export async function publishStory(req, res) {
     const payload = storyOwnerPayload(story, req.user);
     const io = req.app.get('io');
     if (io) io.emit('story:new', { ...payload, mentions: visibleMentions(story, null) });
-    await notifyMentionedUsers(story, req.user.username);
+    await sendStoryMentionMessages(io, story);
 
     res.json({ success: true, data: payload });
   } catch (err) {
