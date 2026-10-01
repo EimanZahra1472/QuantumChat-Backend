@@ -1304,7 +1304,7 @@ export async function editMessage(req, res) {
         message.envelopes = undefined;
         message.markModified('content');
       } else {
-        if (!Array.isArray(envelopes) || envelopes.length < 2) {
+        if (!Array.isArray(envelopes) || envelopes.length === 0) {
           return res.status(400).json({ success: false, error: 'Group edit requires envelopes for each member' });
         }
         message.envelopes = envelopes.map((item) => ({

@@ -1266,7 +1266,8 @@ export async function sendGroupMessage(req, res) {
       }
       content = contentRaw.trim().slice(0, 8000);
     } else {
-      if (!Array.isArray(envelopes) || envelopes.length < 2) {
+      // Private groups: one sealed envelope per member (including solo/1-member groups).
+      if (!Array.isArray(envelopes) || envelopes.length === 0) {
         return res.status(400).json({
           success: false,
           error: 'envelopes must include a sealed-box copy for each member',
@@ -1289,8 +1290,8 @@ export async function sendGroupMessage(req, res) {
       }
 
       const covered = new Set(normalized.map((e) => String(e.user)));
-      for (const memberId of memberSet) {
-        if (!covered.has(memberId)) {
+      for (const mid of memberSet) {
+        if (!covered.has(mid)) {
           return res.status(400).json({ success: false, error: 'Missing sealed envelope for a group member' });
         }
       }
