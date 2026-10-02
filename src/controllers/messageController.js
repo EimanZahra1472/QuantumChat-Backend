@@ -202,6 +202,14 @@ export function toClientMessage(doc, viewerId) {
       message.locked = true;
     }
   }
+  if (message.transcription) {
+    message.transcription = {
+      ...message.transcription,
+      claimToken: undefined,
+      claimLeaseUntil: undefined,
+      claimedBy: undefined,
+    };
+  }
   return message;
 }
 
@@ -486,6 +494,77 @@ export async function checkForwardAllowed(req, res) {
     }
     const verdict = evaluateForwardPolicy(original);
     return res.json({ success: true, data: verdict });
+  } catch (err) {
+    res.status(err.status || 500).json({ success: false, error: err.message });
+  }
+}
+
+export async function upsertTranscriptState(req, res) {
+  try {
+    const { messageId } = req.params;
+    const messageOid = toObjectId(messageId);
+    if (!messageOid) {
+      return res.status(400).json({ success: false, error: 'Invalid message id' });
+    }
+    const message = await Message.findById(messageOid);
+    if (!message) return res.status(404).json({ success: false, error: 'Message not found' });
+    if (String(message.from) !== String(req.user._id)) {
+      return res.status(403).json({ success: false, error: 'Only the sender can manage transcript state' });
+    }
+
+    const { action = 'claim', claimToken, status, language, encryptedText, nonce, ephemeralPublicKey, targetPublicKey, error } = req.body || {};
+    const existing = message.transcription || {};
+
+    if (action === 'claim') {
+      const token = crypto.randomBytes(16).toString('hex');
+      const lease = new Date(Date.now() + 60_000);
+      message.transcription = {
+        ...(existing || {}),
+        status: existing.status === 'completed' ? 'completed' : 'running',
+        model: existing.model || 'Xenova/whisper-tiny',
+        revision: existing.revision || '5332fcc35e32a33b86612b9a57a89be7906102b1',
+        claimToken: token,
+        claimLeaseUntil: lease,
+        claimedBy: req.user._id,
+        language: typeof language === 'string' ? language.slice(0, 32) : existing.language,
+        updatedAt: new Date(),
+      };
+      await message.save();
+      return res.json({ success: true, data: { transcription: message.transcription } });
+    }
+
+    if (action === 'commit') {
+      if (!claimToken || String(claimToken) !== String(existing.claimToken || '')) {
+        return res.status(409).json({ success: false, error: 'Transcript claim token is invalid or expired' });
+      }
+      if (!existing.claimLeaseUntil || new Date(existing.claimLeaseUntil).getTime() < Date.now()) {
+        return res.status(409).json({ success: false, error: 'Transcript claim has expired' });
+      }
+      if (!encryptedText || !nonce || !ephemeralPublicKey || !targetPublicKey) {
+        return res.status(400).json({ success: false, error: 'Transcript ciphertext and envelope metadata are required' });
+      }
+
+      message.transcription = {
+        ...(existing || {}),
+        status: typeof status === 'string' ? status : 'completed',
+        model: existing.model || 'Xenova/whisper-tiny',
+        revision: existing.revision || '5332fcc35e32a33b86612b9a57a89be7906102b1',
+        language: typeof language === 'string' ? language.slice(0, 32) : existing.language,
+        claimToken: undefined,
+        claimLeaseUntil: null,
+        claimedBy: null,
+        encryptedText: String(encryptedText),
+        nonce: String(nonce),
+        ephemeralPublicKey: String(ephemeralPublicKey),
+        targetPublicKey: String(targetPublicKey),
+        error: typeof error === 'string' && error.trim() ? error.slice(0, 500) : undefined,
+        updatedAt: new Date(),
+      };
+      await message.save();
+      return res.json({ success: true, data: { transcription: message.transcription } });
+    }
+
+    return res.status(400).json({ success: false, error: 'Unsupported transcript action' });
   } catch (err) {
     res.status(err.status || 500).json({ success: false, error: err.message });
   }

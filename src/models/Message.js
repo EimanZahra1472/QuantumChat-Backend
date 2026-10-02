@@ -129,6 +129,29 @@ const messageSchema = new mongoose.Schema(
     },
     viewOnceOpenedAt: { type: Date, default: null },
     viewOnceOpenedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    // Local ASR transcript produced only on the sender device, then re-sealed
+    // before it ever reaches the backend. The message server only stores the
+    // metadata and encrypted transcript state; plaintext stays client-side.
+    transcription: {
+      status: {
+        type: String,
+        enum: ['queued', 'running', 'completed', 'failed', 'unsupported'],
+        default: 'completed',
+      },
+      model: { type: String, default: 'Xenova/whisper-tiny' },
+      revision: { type: String, default: '5332fcc35e32a33b86612b9a57a89be7906102b1' },
+      language: { type: String, default: undefined },
+      claimToken: { type: String, default: undefined },
+      claimLeaseUntil: { type: Date, default: null },
+      claimedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+      encryptedText: { type: String, default: undefined },
+      nonce: { type: String, default: undefined },
+      ephemeralPublicKey: { type: String, default: undefined, match: HEX_64 },
+      targetPublicKey: { type: String, default: undefined, match: HEX_64 },
+      error: { type: String, default: undefined },
+      createdAt: { type: Date, default: Date.now },
+      updatedAt: { type: Date, default: Date.now },
+    },
     // Vault decoy separation: when set, this message only belongs to the
     // decoy thread for this user's locked vault view of the conversation.
     // Never set for group messages. Plain metadata — does not touch the
