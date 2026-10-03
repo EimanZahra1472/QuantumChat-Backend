@@ -1144,12 +1144,16 @@ export async function sendGroupMessage(req, res) {
       const attachmentDoc = await Attachment.findById(toObjectId(attachmentId)).select('mimetype filename');
       const mime = String(attachmentDoc?.mimetype || '').toLowerCase();
       const name = String(attachmentDoc?.filename || '').toLowerCase();
-      if (mime.startsWith('audio/') || /\.(webm|ogg|mp3|m4a|wav|aac)$/i.test(name) || /^voice-note/i.test(name)) {
+      if (mime.startsWith('video/')) {
+        mediaCategory = 'video';
+      } else if (mime.startsWith('audio/') || /^voice-note/i.test(name)) {
         mediaCategory = 'voice';
       } else if (mime.startsWith('image/') || /\.(png|jpe?g|gif|webp|bmp)$/i.test(name)) {
         mediaCategory = 'photo';
-      } else if (mime.startsWith('video/') || /\.(mp4|webm|mov|mkv|avi)$/i.test(name)) {
+      } else if (/\.(mp4|webm|mov|mkv|avi)$/i.test(name)) {
         mediaCategory = 'video';
+      } else if (/\.(ogg|mp3|m4a|wav|aac)$/i.test(name)) {
+        mediaCategory = 'voice';
       } else {
         mediaCategory = 'document';
       }
