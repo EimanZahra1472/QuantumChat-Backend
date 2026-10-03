@@ -88,11 +88,13 @@ function mediaKindFromAttachment(attachment) {
   if (!attachment) return null;
   const mime = String(attachment.mimetype || '').toLowerCase();
   const name = String(attachment.filename || '').toLowerCase();
-  if (mime.startsWith('audio/') || /\.(webm|ogg|mp3|m4a|wav|aac)$/i.test(name) || /^voice-note/i.test(name)) {
+  if (mime.startsWith('video/')) return 'video';
+  if (mime.startsWith('audio/') || /^voice-note/i.test(name)) {
     return 'audio';
   }
   if (mime.startsWith('image/') || /\.(png|jpe?g|gif|webp|bmp)$/i.test(name)) return 'image';
-  if (mime.startsWith('video/') || /\.(mp4|webm|mov|mkv|avi)$/i.test(name)) return 'video';
+  if (/\.(mp4|webm|mov|mkv|avi)$/i.test(name)) return 'video';
+  if (/\.(ogg|mp3|m4a|wav|aac)$/i.test(name)) return 'audio';
   return null;
 }
 
