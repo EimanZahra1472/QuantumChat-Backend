@@ -182,3 +182,70 @@ test('multi-MB video upload is stored as ciphertext, decrypts identically, and i
     assert.equal(unsealBytes(asBob.bytes, sealed, key.secretKey), null);
   }
 });
+
+// --- 5. Upload-flow hijacking ---------------------------------------------
+
+async function startPendingUpload(sealed) {
+  const initRes = await fetch(`${ctx.base}/attachments/init`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${alice.token}` },
+    body: JSON.stringify(initBody(sealed)),
+  }).then((r) => r.json());
+  assert.equal(initRes.success, true, `init failed: ${initRes.error}`);
+  return initRes.data.pendingUploadId;
+}
+
+test('a third party cannot upload bytes into someone else\'s pending upload', async () => {
+  const sealed = sealBytes(Buffer.from(MARKER), bob.keySet[0].publicKey);
+  const pendingId = await startPendingUpload(sealed);
+
+  const form = new FormData();
+  form.append('file', new Blob([Buffer.from('attacker bytes')]), 'evil.bin');
+  const res = await fetch(`${ctx.base}/attachments/pending/${pendingId}/bytes?slot=recipient`, {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${mallory.token}` },
+    body: form,
+  });
+  assert.ok([401, 403, 404].includes(res.status), `expected 401/403/404, got ${res.status}`);
+});
+
+test('a third party cannot finalize someone else\'s pending upload', async () => {
+  const sealed = sealBytes(Buffer.from(MARKER), bob.keySet[0].publicKey);
+  const pendingId = await startPendingUpload(sealed);
+
+  const res = await fetch(`${ctx.base}/attachments/finalize`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${mallory.token}` },
+    body: JSON.stringify({ pendingUploadId: pendingId }),
+  });
+  assert.ok([401, 403, 404].includes(res.status), `expected 401/403/404, got ${res.status}`);
+});
+
+test('finalize with a nonexistent pendingUploadId is rejected', async () => {
+  const res = await fetch(`${ctx.base}/attachments/finalize`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${alice.token}` },
+    body: JSON.stringify({ pendingUploadId: '507f1f77bcf86cd799439011' }),
+  });
+  assert.ok([400, 404].includes(res.status), `expected 400/404, got ${res.status}`);
+});
+
+test('finalize without uploading any bytes is rejected', async () => {
+  const sealed = sealBytes(Buffer.from(MARKER), bob.keySet[0].publicKey);
+  const pendingId = await startPendingUpload(sealed);
+  const res = await fetch(`${ctx.base}/attachments/finalize`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${alice.token}` },
+    body: JSON.stringify({ pendingUploadId: pendingId }),
+  });
+  assert.ok(res.status >= 400 && res.status < 500, `expected a 4xx, got ${res.status}`);
+});
+
+test('NoSQL-injection payload as pendingUploadId is rejected', async () => {
+  const res = await fetch(`${ctx.base}/attachments/finalize`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${alice.token}` },
+    body: JSON.stringify({ pendingUploadId: { $ne: null } }),
+  });
+  assert.equal(res.status, 400);
+});
