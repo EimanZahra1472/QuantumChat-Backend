@@ -139,3 +139,56 @@ test('a stored file claiming to be HTML is not served as renderable HTML', async
   assert.equal(/text\/html|image\/svg|application\/xhtml/.test(type), false, `raw endpoint served active content type: ${type}`);
   assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
 });
+// --- 4. Chunked upload path (used for larger files such as video) ---------
+
+async function putChunk(pendingId, bytes, chunkIndex, totalChunks) {
+  const res = await fetch(
+    `${ctx.base}/attachments/pending/${pendingId}/chunk?slot=recipient&chunkIndex=${chunkIndex}&totalChunks=${totalChunks}`,
+    {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${alice.token}`, 'Content-Type': 'application/octet-stream' },
+      body: bytes,
+    }
+  );
+  return { status: res.status, body: await res.json().catch(() => ({})) };
+}
+
+test('control: a chunked upload of exactly the declared size succeeds and finalizes', async () => {
+  const sealed = sealSmall();
+  const { body } = await init(sealed);
+  assert.equal(body.success, true, `setup: init must succeed (${body.error})`);
+  const pendingId = body.data.pendingUploadId;
+
+  const chunk = await putChunk(pendingId, sealed.cipherBytes, 0, 1);
+  assert.equal(chunk.body.success, true, `chunk upload must succeed (status ${chunk.status}, ${chunk.body.error})`);
+  const fin = await finalize(pendingId);
+  assert.equal(fin.body.success, true, `finalize must succeed (${fin.body.error})`);
+});
+
+test('a single chunk larger than the declared size is rejected', async () => {
+  const sealed = sealSmall();
+  const { body } = await init(sealed, { size: 10 });
+  assert.equal(body.success, true, `setup: init must succeed (${body.error})`);
+  const res = await putChunk(body.data.pendingUploadId, Buffer.alloc(4096, 1), 0, 1);
+  assert.equal(res.status, 400, `expected 400, got ${res.status}`);
+});
+
+test('chunks that add up to more than the declared size are rejected', async () => {
+  const sealed = sealSmall();
+  const { body } = await init(sealed, { size: 100 });
+  assert.equal(body.success, true, `setup: init must succeed (${body.error})`);
+  const pendingId = body.data.pendingUploadId;
+
+  const first = await putChunk(pendingId, Buffer.alloc(60, 1), 0, 2);
+  assert.equal(first.body.success, true, `first chunk is within the limit (${first.body.error})`);
+  const second = await putChunk(pendingId, Buffer.alloc(60, 2), 1, 2);
+  assert.equal(second.status, 400, `second chunk pushes past the declared size, expected 400, got ${second.status}`);
+});
+
+test('an upload that finishes smaller than the declared size is rejected', async () => {
+  const sealed = sealSmall();
+  const { body } = await init(sealed, { size: 100 });
+  assert.equal(body.success, true, `setup: init must succeed (${body.error})`);
+  const res = await putChunk(body.data.pendingUploadId, Buffer.alloc(50, 1), 0, 1);
+  assert.equal(res.status, 400, `expected 400, got ${res.status}`);
+});
