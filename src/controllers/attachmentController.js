@@ -248,7 +248,7 @@ export async function uploadPendingAttachmentChunk(req, res) {
     if (!Number.isInteger(totalChunks) || totalChunks < 1) {
       return res.status(400).json({ success: false, error: 'Valid totalChunks is required' });
     }
-    if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+    if (typeof req.body === 'string' || Array.isArray(req.body) || !Buffer.isBuffer(req.body) || req.body.length === 0) {
       return res.status(400).json({ success: false, error: 'Chunk body is required' });
     }
 
