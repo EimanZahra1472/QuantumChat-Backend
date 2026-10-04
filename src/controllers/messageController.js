@@ -540,9 +540,23 @@ export async function sendMessage(req, res) {
     if (attachmentId && !mongoose.isValidObjectId(attachmentId)) {
       return res.status(400).json({ success: false, error: 'Invalid attachment id' });
     }
-    const recipient = await User.findById(toOid).select('privacy friends blockedUsers username');
+    const recipient = await User.findById(toOid).select('privacy friends blockedUsers username publicKeys');
     if (!recipient) {
       return res.status(404).json({ success: false, error: 'Recipient not found' });
+    }
+        const keyList = (keys) => (keys || []).map((k) => String(k).toLowerCase());
+    const recipientKeys = keyList(recipient.publicKeys);
+    const senderKeys = keyList(req.user.publicKeys);
+    const recipientTargetOk =
+      recipientKeys.length === 0 || recipientKeys.includes(String(forRecipient.targetPublicKey).toLowerCase());
+    const senderTargetOk =
+      senderKeys.length === 0 || senderKeys.includes(String(forSender.targetPublicKey).toLowerCase());
+    if (!recipientTargetOk || !senderTargetOk) {
+      return res.status(400).json({
+        success: false,
+        error: 'Envelopes must be sealed to a registered key of the intended person',
+        code: 'ENVELOPE_KEY_MISMATCH',
+      });
     }
     const senderBlockedRecipient = (req.user.blockedUsers || []).some((id) => String(id) === String(toOid));
     const recipientBlockedSender = (recipient.blockedUsers || []).some((id) => String(id) === String(req.user._id));
