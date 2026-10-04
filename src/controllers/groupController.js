@@ -18,11 +18,17 @@ const ATTACHMENT_POPULATE =
 const MEMBER_POPULATE =
   'username email publicKeys lastLoginAt keyRotatedAt avatarPath isSystemUser systemRole verified privacy friends';
 
+const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
+
+function decodedLength(value) {
+  return typeof value === 'string' && BASE64.test(value) ? Buffer.from(value, 'base64').length : -1;
+}
+
 function validateEnvelope(envelope) {
+  if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope)) return false;
   return (
-    envelope &&
-    typeof envelope.ciphertext === 'string' &&
-    typeof envelope.nonce === 'string' &&
+    decodedLength(envelope.ciphertext) >= 16 && // nacl box adds a 16-byte authentication tag
+    decodedLength(envelope.nonce) === 24 && // nacl nonce length
     HEX_64.test(envelope.ephemeralPublicKey || '') &&
     HEX_64.test(envelope.targetPublicKey || '')
   );

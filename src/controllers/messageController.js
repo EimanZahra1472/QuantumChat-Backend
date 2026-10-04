@@ -15,17 +15,21 @@ import { toObjectId } from '../utils/toObjectId.js';
 const HEX_64 = /^[0-9a-f]{64}$/i;
 const ATTACHMENT_POPULATE =
   'filename mimetype size nonce ephemeralPublicKey targetPublicKey forSenderNonce forSenderEphemeralPublicKey forSenderTargetPublicKey';
+const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
+
+function decodedLength(value) {
+  return typeof value === 'string' && BASE64.test(value) ? Buffer.from(value, 'base64').length : -1;
+}
 
 function validateEnvelope(envelope) {
+  if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope)) return false;
   return (
-    envelope &&
-    typeof envelope.ciphertext === 'string' &&
-    typeof envelope.nonce === 'string' &&
+    decodedLength(envelope.ciphertext) >= 16 && // nacl box adds a 16-byte authentication tag
+    decodedLength(envelope.nonce) === 24 && // nacl nonce length
     HEX_64.test(envelope.ephemeralPublicKey || '') &&
     HEX_64.test(envelope.targetPublicKey || '')
   );
 }
-
 function normalizeEnvelope(envelope) {
   return {
     ...envelope,
@@ -536,10 +540,11 @@ export async function sendMessage(req, res) {
     if (attachmentId && !mongoose.isValidObjectId(attachmentId)) {
       return res.status(400).json({ success: false, error: 'Invalid attachment id' });
     }
-    const recipient = await User.findById(toOid).select('privacy friends blockedUsers username');
+    const recipient = await User.findById(toOid).select('privacy friends blockedUsers username publicKeys');
     if (!recipient) {
       return res.status(404).json({ success: false, error: 'Recipient not found' });
     }
+    
     const senderBlockedRecipient = (req.user.blockedUsers || []).some((id) => String(id) === String(toOid));
     const recipientBlockedSender = (recipient.blockedUsers || []).some((id) => String(id) === String(req.user._id));
     if (senderBlockedRecipient || recipientBlockedSender) {
@@ -554,6 +559,22 @@ export async function sendMessage(req, res) {
           error: 'Your account is currently restricted from messaging new contacts',
         });
       }
+    }
+        await assertCanDirectMessageWithDoc(req.user._id, recipient);
+
+    const keyList = (keys) => (keys || []).map((k) => String(k).toLowerCase());
+    const recipientKeys = keyList(recipient.publicKeys);
+    const senderKeys = keyList(req.user.publicKeys);
+    const recipientTargetOk =
+      recipientKeys.length === 0 || recipientKeys.includes(String(forRecipient.targetPublicKey).toLowerCase());
+    const senderTargetOk =
+      senderKeys.length === 0 || senderKeys.includes(String(forSender.targetPublicKey).toLowerCase());
+    if (!recipientTargetOk || !senderTargetOk) {
+      return res.status(400).json({
+        success: false,
+        error: 'Envelopes must be sealed to a registered key of the intended person',
+        code: 'ENVELOPE_KEY_MISMATCH',
+      });
     }
     await assertCanDirectMessageWithDoc(req.user._id, recipient);
     const expiresAt = resolveExpiresAt(expiresInSeconds);
