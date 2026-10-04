@@ -64,11 +64,8 @@ test("mass assignment: alice cannot write a vault into bob's account via a 'user
   const bobDoc = await mongoose.connection.db
     .collection(col)
     .findOne({ user: new mongoose.Types.ObjectId(bob.user.id) });
-  assert.equal(
-    bobDoc && JSON.stringify(bobDoc).includes(VAULT_MARKER),
-    false,
-    "alice's vault data must never end up under bob's account"
-  );
+  const leaked = bobDoc ? JSON.stringify(bobDoc).includes(VAULT_MARKER) : false;
+  assert.equal(leaked, false, "alice's vault data must never end up under bob's account");
 });
 
 test("bob cannot read alice's vault data", async () => {
