@@ -544,20 +544,7 @@ export async function sendMessage(req, res) {
     if (!recipient) {
       return res.status(404).json({ success: false, error: 'Recipient not found' });
     }
-        const keyList = (keys) => (keys || []).map((k) => String(k).toLowerCase());
-    const recipientKeys = keyList(recipient.publicKeys);
-    const senderKeys = keyList(req.user.publicKeys);
-    const recipientTargetOk =
-      recipientKeys.length === 0 || recipientKeys.includes(String(forRecipient.targetPublicKey).toLowerCase());
-    const senderTargetOk =
-      senderKeys.length === 0 || senderKeys.includes(String(forSender.targetPublicKey).toLowerCase());
-    if (!recipientTargetOk || !senderTargetOk) {
-      return res.status(400).json({
-        success: false,
-        error: 'Envelopes must be sealed to a registered key of the intended person',
-        code: 'ENVELOPE_KEY_MISMATCH',
-      });
-    }
+    
     const senderBlockedRecipient = (req.user.blockedUsers || []).some((id) => String(id) === String(toOid));
     const recipientBlockedSender = (recipient.blockedUsers || []).some((id) => String(id) === String(req.user._id));
     if (senderBlockedRecipient || recipientBlockedSender) {
@@ -572,6 +559,22 @@ export async function sendMessage(req, res) {
           error: 'Your account is currently restricted from messaging new contacts',
         });
       }
+    }
+        await assertCanDirectMessageWithDoc(req.user._id, recipient);
+
+    const keyList = (keys) => (keys || []).map((k) => String(k).toLowerCase());
+    const recipientKeys = keyList(recipient.publicKeys);
+    const senderKeys = keyList(req.user.publicKeys);
+    const recipientTargetOk =
+      recipientKeys.length === 0 || recipientKeys.includes(String(forRecipient.targetPublicKey).toLowerCase());
+    const senderTargetOk =
+      senderKeys.length === 0 || senderKeys.includes(String(forSender.targetPublicKey).toLowerCase());
+    if (!recipientTargetOk || !senderTargetOk) {
+      return res.status(400).json({
+        success: false,
+        error: 'Envelopes must be sealed to a registered key of the intended person',
+        code: 'ENVELOPE_KEY_MISMATCH',
+      });
     }
     await assertCanDirectMessageWithDoc(req.user._id, recipient);
     const expiresAt = resolveExpiresAt(expiresInSeconds);
